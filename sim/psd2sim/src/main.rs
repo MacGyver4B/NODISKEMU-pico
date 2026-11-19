@@ -307,7 +307,12 @@ fn main() {
         eprintln!("psd2sim: SD-Karte {} ({} Bloecke)", p, unsafe { sd_blocks() });
     }
     let mut uline = String::new();
-    let bootrom = std::fs::read(std::env::var("PICOEM_BOOTROM").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../picoem/roms/rp2350/bootrom-combined.bin").to_string())).expect("Bootrom");
+    // Die Firmware umgeht den Bootrom (siehe unten), ein leerer reicht;
+    // PICOEM_BOOTROM laedt bei Bedarf ein echtes Abbild.
+    let bootrom = match std::env::var("PICOEM_BOOTROM") {
+        Ok(p) => std::fs::read(p).expect("Bootrom"),
+        Err(_) => vec![0u8; 32 * 1024],
+    };
     // Schrittweite in Takten: kleiner = Ausgaenge zeitgenauer am Bus
     // Standard: fein (8) nur, solange die Firmware die Interrupts sperrt
     // (AR6-Zeitfenster), sonst grob (64)

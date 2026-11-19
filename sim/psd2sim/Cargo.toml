@@ -5,9 +5,8 @@ edition = "2021"
 description = "Bruecke: NODISKEMU-pico in picoem an VICE (simlink, IEEE-488 + IEC)"
 
 [dependencies]
-# picoem (https://github.com/0x4d44/picoem) neben diesem Verzeichnis
-# auschecken und ../picoem.patch anwenden, siehe README.md
-rp2350-emu = { path = "../picoem/crates/rp2350-emu" }
+# picoem mit den psd2-Korrekturen (CPS-Bits, SIO GPIO_HI_OUT/OE)
+rp2350-emu = { git = "https://github.com/MacGyver4B/picoem", branch = "psd2" }
 
 [build-dependencies]
 cc = "1"
