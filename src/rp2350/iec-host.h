@@ -1,6 +1,6 @@
 /* iec-host.h - IEC-Bus als Rechner fuer petSD2 (RP2350): Pins und Zeit
 
-   Belegung laut Konzept (18.11.):
+   Vorgabe-Belegung (ueberschreibbar in pico/boards/<board>.h):
      39 CLK_I  40 DATA_I  41 ATN_I  42 SRQ_I      ueber 74LVC14A (invertiert:
                                                    Pin high = Leitung low)
      43 CLK_O  44 DATA_O  45 ATN_O  46 SRQ_O  47 RESET_O   ueber 74LS07
@@ -20,15 +20,52 @@
 #define IEC_SRQ   0x08
 #define IEC_RESET 0x10
 
+#ifndef IEC_CLK_I
 #define IEC_CLK_I   39
+#endif
+#ifndef IEC_DATA_I
 #define IEC_DATA_I  40
+#endif
+#ifndef IEC_ATN_I
 #define IEC_ATN_I   41
+#endif
+#ifndef IEC_SRQ_I
 #define IEC_SRQ_I   42
+#endif
+#ifndef IEC_CLK_O
 #define IEC_CLK_O   43
+#endif
+#ifndef IEC_DATA_O
 #define IEC_DATA_O  44
+#endif
+#ifndef IEC_ATN_O
 #define IEC_ATN_O   45
+#endif
+#ifndef IEC_SRQ_O
 #define IEC_SRQ_O   46
+#endif
+#ifndef IEC_RESET_O
 #define IEC_RESET_O 47
+#endif
+
+/* Pruefungen: Ein- und Ausgaenge liegen in den oberen SIO-Registern
+   (GPIO 32-47); die Eingaenge bilden einen Block CLK_I..SRQ_I, die Ausgaenge
+   einen Block CLK_O..RESET_O mit DATA_O direkt hinter CLK_O (die PIO fuer
+   AR6 setzt beide mit einem Befehl). */
+#if IEC_CLK_I < 32 || IEC_SRQ_I > 47 || IEC_CLK_O < 32 || IEC_RESET_O > 47
+#  error "IEC-Pins muessen in GPIO 32-47 liegen"
+#endif
+#if IEC_SRQ_I - IEC_CLK_I != 3 || \
+    IEC_DATA_I < IEC_CLK_I || IEC_DATA_I > IEC_SRQ_I || IEC_ATN_I < IEC_CLK_I || \
+    IEC_ATN_I > IEC_SRQ_I || IEC_DATA_I == IEC_ATN_I
+#  error "IEC-Eingaenge muessen ein Block von vier Pins sein (CLK_I niedrigster, SRQ_I hoechster)"
+#endif
+#if IEC_DATA_O != IEC_CLK_O + 1 || IEC_RESET_O - IEC_CLK_O != 4 || \
+    IEC_ATN_O < IEC_CLK_O || IEC_ATN_O > IEC_RESET_O || IEC_SRQ_O < IEC_CLK_O || \
+    IEC_SRQ_O > IEC_RESET_O || IEC_ATN_O == IEC_SRQ_O || \
+    IEC_ATN_O == IEC_DATA_O || IEC_SRQ_O == IEC_DATA_O
+#  error "IEC-Ausgaenge muessen ein Block von fuenf Pins sein, DATA_O = CLK_O + 1"
+#endif
 
 #define IEC_HI(p) (1u << ((p) - 32))
 

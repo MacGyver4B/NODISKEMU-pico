@@ -1,14 +1,18 @@
 /*
- * Olimex RP2350-PICO2-XXL (RP2350B, 48 GPIO, 16 MB Flash, 8 MB PSRAM, microSD)
- * Eigene Board-Datei fuer petSD2+IEC; Belegung des Boards laut Olimex-Pinout:
- * GPIO 8 PSRAM-CS, 9/10/11/24 microSD (CS, CLK, CMD, DAT0), 25 LED.
+ * Olimex RP2350-PICO2-BB48R (RP2350B, 48 GPIO, DIL-Raster 0,6", 16 MB Flash,
+ * 8 MB PSRAM, microSD)
+ * Eigene Board-Datei fuer petSD2+IEC; Belegung laut Schaltplan Rev. A:
+ * GPIO 0/1 UART0, 2/3 I2C1 (Qwiic/UEXT), 4-7 SPI0 (UEXT), 25 LED.
+ * Zusaetzlich zum BB48: PSRAM (CS GPIO 8) und microSD an 9/10/11/24 (SPI1),
+ * dieselben Pins wie der SD-Steckplatz der Traegerplatine - nur einen davon
+ * bestuecken.
  */
-#ifndef _BOARDS_OLIMEX_PICO2_XXL_H
-#define _BOARDS_OLIMEX_PICO2_XXL_H
+#ifndef _BOARDS_OLIMEX_RP2350_PICO2_BB48R_H
+#define _BOARDS_OLIMEX_RP2350_PICO2_BB48R_H
 
 // pico_cmake_set PICO_PLATFORM=rp2350
 
-#define OLIMEX_PICO2_XXL
+#define OLIMEX_RP2350_PICO2_BB48R
 
 // RP2350B: 48 GPIO
 #define PICO_RP2350A 0
@@ -38,17 +42,16 @@
 #define PICO_DEFAULT_I2C_SCL_PIN 3
 #endif
 
-// microSD auf dem Board
-#define OLIMEX_SD_CS_PIN   9
-#define OLIMEX_SD_CLK_PIN  10
-#define OLIMEX_SD_CMD_PIN  11
-#define OLIMEX_SD_DAT0_PIN 24
-#define OLIMEX_PSRAM_CS_PIN 8
+// petSD2+IEC: IEEE-, IEC- und SD-Pins kommen aus den Vorgaben in
+// src/rp2350/arch-config.h (PSD2_*) und src/rp2350/iec-host.h (IEC_*), sie
+// passen zu diesem Board (microSD 9/10/11/24 an SPI1, LED 25). Ein Board
+// mit anderer Belegung definiert die abweichenden Pins hier.
 
 #define PICO_BOOT_STAGE2_CHOOSE_W25Q080 1
 #ifndef PICO_FLASH_SPI_CLKDIV
 #define PICO_FLASH_SPI_CLKDIV 2
 #endif
+// W25Q128JV, 16 MB
 // pico_cmake_set_default PICO_FLASH_SIZE_BYTES = (16 * 1024 * 1024)
 #ifndef PICO_FLASH_SIZE_BYTES
 #define PICO_FLASH_SIZE_BYTES (16 * 1024 * 1024)

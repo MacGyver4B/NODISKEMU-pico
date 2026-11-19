@@ -1,7 +1,10 @@
-/* arch-config.h - NODISKEMU auf petSD2+IEC (RP2350B, Olimex PICO2-XXL)
+/* arch-config.h - NODISKEMU auf petSD2+IEC (RP2350B)
 
    IEEE-488 wie beim petSD+ ueber SN75160 (Daten) und SN75161 (Steuerung),
    DC fest auf high (Geraet), ein gemeinsames TE fuer beide Bausteine.
+   Vorgabe-Belegung (Olimex PICO2-XXL und PICO2-BB48); ein Board kann jeden
+   Pin in seiner Datei unter pico/boards/ ueberschreiben, die Pruefungen
+   unten stellen sicher, dass die Belegung zum Code passt.
    Alle 7516x-Leitungen liegen auf 5-V-toleranten GPIOs (< 40, RP2350 A4):
      16-23  D1-D8 (75160)
      26     TE (high = sprechen)
@@ -41,19 +44,88 @@ typedef unsigned int rawbutton_t;
 #define EEPROMFS_ENTRIES    8
 #define EEPROMFS_SECTORSIZE 64
 
-/* ----- Pins ----- */
+/* ----- Pins (Vorgabe, ueberschreibbar in pico/boards/<board>.h) ----- */
 
-#define PSD2_D_BASE   16
+#ifndef PSD2_D_BASE
+#define PSD2_D_BASE   16      /* D1-D8 zusammenhaengend ab hier */
+#endif
+#ifndef PSD2_TE
 #define PSD2_TE       26
+#endif
+#ifndef PSD2_ATN
 #define PSD2_ATN      27
+#endif
+#ifndef PSD2_IFC
 #define PSD2_IFC      28
+#endif
+#ifndef PSD2_REN
 #define PSD2_REN      29
+#endif
+#ifndef PSD2_EOI
 #define PSD2_EOI      30
+#endif
+#ifndef PSD2_DAV
 #define PSD2_DAV      31
+#endif
+#ifndef PSD2_NRFD
 #define PSD2_NRFD     32
+#endif
+#ifndef PSD2_NDAC
 #define PSD2_NDAC     33
+#endif
+#ifndef PSD2_SRQ
 #define PSD2_SRQ      34
+#endif
+#ifndef PSD2_LED
 #define PSD2_LED      25
+#endif
+/* microSD an SPI1 */
+#ifndef PSD2_SD_CS
+#define PSD2_SD_CS    9
+#endif
+#ifndef PSD2_SD_CLK
+#define PSD2_SD_CLK   10
+#endif
+#ifndef PSD2_SD_MOSI
+#define PSD2_SD_MOSI  11
+#endif
+#ifndef PSD2_SD_MISO
+#define PSD2_SD_MISO  24
+#endif
+/* Fenster der PIO-Bloecke (ATN-Erkennung, IEC-Senden): GPIO base..base+31 */
+#ifndef PSD2_PIO_GPIO_BASE
+#define PSD2_PIO_GPIO_BASE 16
+#endif
+
+/* Pruefungen: der Code liest D1-D8, ATN, IFC, EOI, DAV, TE und die LED ueber
+   die unteren SIO-Register (GPIO 0-31), NRFD und NDAC ueber die oberen
+   (32-47). Die 7516x liefern 5 V, die ADC-Pins 40-47 vertragen das nicht. */
+#if PSD2_D_BASE < 0 || PSD2_D_BASE + 7 > 31
+#  error "PSD2_D_BASE: D1-D8 muessen zusammenhaengend in GPIO 0-31 liegen"
+#endif
+#if PSD2_TE > 31 || PSD2_ATN > 31 || PSD2_IFC > 31 || PSD2_REN > 31 || \
+    PSD2_EOI > 31 || PSD2_DAV > 31 || PSD2_LED > 31
+#  error "TE, ATN, IFC, REN, EOI, DAV und LED muessen in GPIO 0-31 liegen"
+#endif
+#if PSD2_NRFD < 32 || PSD2_NRFD > 39 || PSD2_NDAC < 32 || PSD2_NDAC > 39
+#  error "NRFD und NDAC muessen in GPIO 32-39 liegen (oberes SIO-Register, unter den ADC-Pins)"
+#endif
+#if PSD2_SRQ > 39
+#  error "SRQ muss unter GPIO 40 liegen (5-V-Toleranz)"
+#endif
+#if PSD2_PIO_GPIO_BASE != 0 && PSD2_PIO_GPIO_BASE != 16
+#  error "PSD2_PIO_GPIO_BASE muss 0 oder 16 sein"
+#endif
+#if PSD2_ATN < PSD2_PIO_GPIO_BASE || PSD2_ATN > PSD2_PIO_GPIO_BASE + 31
+#  error "ATN muss im PIO-Fenster liegen (PSD2_PIO_GPIO_BASE..+31)"
+#endif
+#if PSD2_SD_CS == PSD2_SD_CLK || PSD2_SD_CS == PSD2_SD_MOSI || PSD2_SD_CS == PSD2_SD_MISO
+#  error "PSD2_SD_CS darf keinen SPI-Pin doppelt belegen"
+#endif
+#if (PSD2_SD_CLK % 4) != 2 || (PSD2_SD_MOSI % 4) != 3 || (PSD2_SD_MISO % 4) != 0 || \
+    ((PSD2_SD_CLK / 8) % 2) != 1 || ((PSD2_SD_MOSI / 8) % 2) != 1 || ((PSD2_SD_MISO / 8) % 2) != 1
+#  error "PSD2_SD_CLK/MOSI/MISO muessen SPI1-Pins sein (SCK, TX, RX)"
+#endif
 
 #define PSD2_D_MASK   (0xffu << PSD2_D_BASE)
 #define HI(p)         (1u << ((p) - 32))

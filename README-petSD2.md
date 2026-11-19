@@ -1,7 +1,7 @@
 # NODISKEMU-pico – petSD2+IEC
 
 Fork von [NODISKEMU](https://github.com/nils-eilers/NODISKEMU) (Stand 1.2.0) mit einer
-Portierung auf den RP2350 (Raspberry Pi Pico 2, hier das Olimex RP2350-PICO2-XXL) und
+Portierung auf den RP2350B (Olimex RP2350-PICO2-XL/XXL oder RP2350-PICO2-BB48/BB48R) und
 einem Relais vom IEEE-488-Bus des PET zu seriellen IEC-Laufwerken (1541, 1571, 1581).
 Am IEEE-Bus arbeitet es wie der petSD+ mit SN75160/SN75161.
 
@@ -16,7 +16,7 @@ Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
 | `src/rp2350/` | Arch-Schicht: IEEE-Leitungen über SN75160/75161 (SIO), ATN per PIO-IRQ, SD an SPI1, UART0, SysTick, DWT-Zeitbasis, IEC-Pins, AR6-Senden per PIO |
 | `src/iecrelay.c/.h` | Relais IEEE → IEC: Namen/Befehle/Daten weiterreichen, Kanal vorab holen, AR6-Schnelllader (LOAD 1541/1571/1581, SAVE 1541/1571 einseitig) |
 | `configs/config-petSD2` | NODISKEMU-Konfiguration |
-| `pico/` | CMake-Build mit dem pico-sdk, Board-Header `olimex_pico2_xxl` |
+| `pico/` | CMake-Build mit dem pico-sdk, Board-Dateien in `pico/boards/` |
 | `sim/psd2sim/` | Brücke: Firmware in picoem ([Fork mit Korrekturen](https://github.com/MacGyver4B/picoem/tree/rp2350b-fixes), Zweig `rp2350b-fixes`) an VICE (simlink, IEEE + IEC), Modell der SN75160/75161, SD-Kartenmodell, Testskripte |
 
 ## Belegung (GPIO)
@@ -37,10 +37,25 @@ die 7516x Pegel liefern.
 | 34 | SRQ – Ausgang (frei = high) |
 | 39–42 | IEC CLK, DATA, ATN, SRQ – Eingänge über 74LVC14A (invertiert) |
 | 43–47 | IEC CLK, DATA, ATN, SRQ, RESET – Ausgänge über 74LS07 |
-| 9/10/11/24 | microSD CS, CLK, CMD, DAT0 (SPI1, auf dem Board) |
-| 8 | PSRAM CS (auf dem Board) |
+| 9/10/11/24 | microSD CS, CLK, CMD, DAT0 (SPI1; XXL und BB48R auf dem Board, XL und BB48 auf der Trägerplatine) |
+| 8 | PSRAM CS (XXL, BB48R; nicht benutzt) |
 | 0/1 | UART0 Debug |
 | 25 | LED (auf dem Board) |
+
+Das ist die Vorgabe in `src/rp2350/arch-config.h` (`PSD2_*`, SD-Karte, PIO-Fenster)
+und `src/rp2350/iec-host.h` (`IEC_*`). Eine Board-Datei kann jeden Pin
+überschreiben. Beim Übersetzen wird geprüft, ob die Belegung zum Code passt:
+D1–D8 zusammenhängend in GPIO 0–31, NRFD/NDAC in 32–39, alle 7516x-Leitungen
+unter 40, IEC-Eingänge als Block von vier und Ausgänge als Block von fünf Pins
+(DATA_O direkt hinter CLK_O) in 32–47, alles im PIO-Fenster, SD an SPI1-Pins.
+IEEE und IEC zusammen brauchen den RP2350B; ein RP2350A (GPIO 0–29) reicht nicht.
+
+| Board-Datei | Board | Flash |
+|---|---|---|
+| `olimex_rp2350_pico2_xxl` (Vorgabe) | Olimex RP2350-PICO2-XXL (mit PSRAM, microSD) | 16 MB |
+| `olimex_rp2350_pico2_xl` | Olimex RP2350-PICO2-XL | 2 MB |
+| `olimex_rp2350_pico2_bb48` | Olimex RP2350-PICO2-BB48 (DIL 0,6") | 2 MB |
+| `olimex_rp2350_pico2_bb48r` | Olimex RP2350-PICO2-BB48R (DIL 0,6", mit PSRAM, microSD) | 16 MB |
 
 Beim Start meldet die Firmware die Chip-Revision am Debug-UART (Revision ≤ 2 = A2).
 
@@ -50,6 +65,7 @@ Beim Start meldet die Firmware die Chip-Revision am Debug-UART (Revision ≤ 2 =
 export PICO_SDK_PATH=/pfad/zum/pico-sdk        # getestet mit 2.1.1
 cd pico
 mkdir build && cd build && cmake .. && make    # petsd2.uf2 für die Hardware
+# anderes Board: cmake -DPICO_BOARD=olimex_rp2350_pico2_bb48 ..
 ```
 
 Für die Simulation: `cmake -DPSD2_EMU=1 ..` in `pico/build-emu`. Diese Variante

@@ -1,7 +1,7 @@
-/* spi.c - SPI fuer die microSD-Karte des Olimex PICO2-XXL
+/* spi.c - SPI1 fuer die microSD-Karte
 
-   Belegung: GPIO 9 CS, 10 CLK, 11 CMD (MOSI), 24 DAT0 (MISO), das
-   entspricht SPI1 (CSn/SCK/TX/RX). CS wird von Hand gesetzt. Im
+   Belegung aus arch-config.h bzw. der Board-Datei (Vorgabe GPIO 9 CS,
+   10 CLK, 11 CMD/MOSI, 24 DAT0/MISO). CS wird von Hand gesetzt. Im
    Emulator (PSD2_EMU) gehen die Bytes ueber das Postfach an das
    SD-Modell der Bruecke. */
 #ifndef PSD2_EMU
@@ -14,10 +14,10 @@
 #  include "emu.h"
 #endif
 
-#define SD_CS   9
-#define SD_CLK  10
-#define SD_MOSI 11
-#define SD_MISO 24
+#define SD_CS   PSD2_SD_CS
+#define SD_CLK  PSD2_SD_CLK
+#define SD_MOSI PSD2_SD_MOSI
+#define SD_MISO PSD2_SD_MISO
 
 #ifdef PSD2_EMU
 

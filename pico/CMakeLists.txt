@@ -1,10 +1,14 @@
-# NODISKEMU-pico: petSD2+IEC (RP2350B, Olimex PICO2-XXL)
+# NODISKEMU-pico: petSD2+IEC (RP2350B)
 #   mkdir build && cd build && cmake .. && make            echte Hardware
+#   -DPICO_BOARD=olimex_rp2350_pico2_xl (bzw. _bb48, _bb48r) waehlt ein anderes
+#   Board aus boards/; Vorgabe ist olimex_rp2350_pico2_xxl
 #   mkdir build-emu && cd build-emu && cmake -DPSD2_EMU=1 .. && make
 #                                                           fuer picoem/psd2sim
 #   -DPSD2_CONFIG=../configs/config-petSD2 waehlt die NODISKEMU-Konfiguration
 cmake_minimum_required(VERSION 3.13)
-set(PICO_BOARD olimex_pico2_xxl)
+if(NOT PICO_BOARD)
+  set(PICO_BOARD olimex_rp2350_pico2_xxl)
+endif()
 set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/boards)
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 project(petsd2 C CXX ASM)

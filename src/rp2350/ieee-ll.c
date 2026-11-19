@@ -54,7 +54,7 @@ void ieee488_InitAtnInterrupt(void) {
        liefern TTL-Pegel aus 5 V, dafuer braucht es A4 (Revision > 2) */
     unsigned rev = rp2350_chip_version();
     printf("RP2350 Revision %u%s\r\n", rev, rev <= 2 ? " - A2 oder aelter, 7516x-Pegel pruefen!" : "");
-    pio_set_gpio_base(atn_pio, 16);
+    pio_set_gpio_base(atn_pio, PSD2_PIO_GPIO_BASE);
     uint off = pio_add_program(atn_pio, &atn_program);
     atn_sm = pio_claim_unused_sm(atn_pio, true);
     pio_sm_config c = atn_program_get_default_config(off);

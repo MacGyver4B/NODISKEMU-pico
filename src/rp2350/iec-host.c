@@ -2,7 +2,13 @@
 #include "hardware/gpio.h"
 #include "hardware/clocks.h"
 #include "hardware/pio.h"
+#include "config.h"
 #include "iec-host.h"
+
+#if IEC_CLK_O < PSD2_PIO_GPIO_BASE || IEC_DATA_O > PSD2_PIO_GPIO_BASE + 31 || \
+    IEC_CLK_I < PSD2_PIO_GPIO_BASE || IEC_SRQ_I > PSD2_PIO_GPIO_BASE + 31
+#  error "IEC-Pins muessen im PIO-Fenster liegen (PSD2_PIO_GPIO_BASE..+31)"
+#endif
 #include "ar6put.pio.h"
 
 /* PIO1 fuer die AR6-Senderoutine (CLK_O/DATA_O); PIO0 hat ATN */
@@ -30,7 +36,7 @@ void iec_host_init(void) {
   *(volatile uint32_t *)0xE0001000u |= 1u;
   iec_cyc_per_us = clock_get_hz(clk_sys) / 1000000u;
 
-  pio_set_gpio_base(apio, 16);
+  pio_set_gpio_base(apio, PSD2_PIO_GPIO_BASE);
   uint off = pio_add_program(apio, &ar6put_program);
   asm_sm = pio_claim_unused_sm(apio, true);
   pio_sm_config c = ar6put_program_get_default_config(off);
