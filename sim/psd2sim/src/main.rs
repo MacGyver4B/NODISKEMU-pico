@@ -16,7 +16,7 @@
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::Ordering;
 
-use rp2350_emu::{Config, Emulator, EmulatorBuilder};
+use rp2350_emu::{Config, Emulator, EmulatorBuilder, Package};
 
 #[repr(C)]
 struct SimlinkT {
@@ -319,6 +319,7 @@ fn main() {
     let step: u32 = std::env::var("PSD2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let coarse: u64 = std::env::var("PSD2_COARSE").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
     let mut emu = EmulatorBuilder::new(Config::default())
+        .package(Package::Qfn80) // Olimex RP2350-PICO2-XXL: RP2350B
         .step_quantum(step)
         .build()
         .expect("Emulator");

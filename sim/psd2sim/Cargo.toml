@@ -6,7 +6,7 @@ description = "Bruecke: NODISKEMU-pico in picoem an VICE (simlink, IEEE-488 + IE
 
 [dependencies]
 # picoem mit den psd2-Korrekturen (CPS-Bits, SIO GPIO_HI_OUT/OE)
-rp2350-emu = { git = "https://github.com/MacGyver4B/picoem", branch = "psd2" }
+rp2350-emu = { git = "https://github.com/MacGyver4B/picoem", branch = "rp2350b-fixes" }
 
 [build-dependencies]
 cc = "1"

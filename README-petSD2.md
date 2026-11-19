@@ -17,7 +17,7 @@ Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
 | `src/iecrelay.c/.h` | Relais IEEE → IEC: Namen/Befehle/Daten weiterreichen, Kanal vorab holen, AR6-Schnelllader (LOAD 1541/1571/1581, SAVE 1541/1571 einseitig) |
 | `configs/config-petSD2` | NODISKEMU-Konfiguration |
 | `pico/` | CMake-Build mit dem pico-sdk, Board-Header `olimex_pico2_xxl` |
-| `sim/psd2sim/` | Brücke: Firmware in picoem ([Fork mit Korrekturen](https://github.com/MacGyver4B/picoem/tree/psd2), Zweig `psd2`) an VICE (simlink, IEEE + IEC), Modell der SN75160/75161, SD-Kartenmodell, Testskripte |
+| `sim/psd2sim/` | Brücke: Firmware in picoem ([Fork mit Korrekturen](https://github.com/MacGyver4B/picoem/tree/rp2350b-fixes), Zweig `rp2350b-fixes`) an VICE (simlink, IEEE + IEC), Modell der SN75160/75161, SD-Kartenmodell, Testskripte |
 
 ## Belegung (GPIO)
 
@@ -64,9 +64,9 @@ SD-Karte. Fehlt die Datei, arbeitet das Relais mit dem normalen seriellen Protok
 
 ## Simulation und Tests
 
-picoem holt `cargo` selbst aus dem Fork (Zweig `psd2`, Korrekturen an den CPS-Bits
-und den SIO-Registern GPIO_HI_OUT/OE). Ein Bootrom-Abbild ist nicht nötig, weil die
-Emulator-Firmware ihn umgeht; `PICOEM_BOOTROM` lädt bei Bedarf trotzdem eins.
+picoem holt `cargo` selbst aus dem Fork (Zweig `rp2350b-fixes`: CPS-Bits, SIO
+GPIO_HI_OUT/OE, Gehäuseauswahl RP2350B mit neun ADC-Kanälen). Ein Bootrom-Abbild
+ist nicht nötig, weil die Emulator-Firmware ihn umgeht; `PICOEM_BOOTROM` lädt bei Bedarf trotzdem eins.
 Neben `sim/` wird nur `vice-lre-simlink/` gebraucht (VICE-Fork, Zweig `simlink`,
 gebaut). Pfade lassen sich in `sim/psd2sim/env.sh` überschreiben.
 
