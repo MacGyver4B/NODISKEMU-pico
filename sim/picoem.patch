@@ -1,0 +1,88 @@
+diff --git a/crates/rp2350-emu/src/core/execute.rs b/crates/rp2350-emu/src/core/execute.rs
+index 85dc6ea..a948586 100644
+--- a/crates/rp2350-emu/src/core/execute.rs
++++ b/crates/rp2350-emu/src/core/execute.rs
+@@ -785,8 +785,10 @@ impl CortexM33 {
+             0b0110 => {
+                 // CPS: CPSIE/CPSID — affects PRIMASK/FAULTMASK
+                 let im = ((opcode >> 4) & 1) as u32;
+-                let affect_i = opcode & (1 << 0) != 0; // bit 0 = I (PRIMASK)
+-                let affect_f = opcode & (1 << 1) != 0; // bit 1 = F (FAULTMASK)
++                // T1-Kodierung 1011 0110 011 im 0 0 I F (ARMv8-M): bit 1 = I,
++                // bit 0 = F; cpsid i ist 0xB672 (psd2: vorher vertauscht)
++                let affect_i = opcode & (1 << 1) != 0; // bit 1 = I (PRIMASK)
++                let affect_f = opcode & (1 << 0) != 0; // bit 0 = F (FAULTMASK)
+                 if affect_i {
+                     self.regs.primask = im;
+                 }
+diff --git a/crates/rp2350-emu/src/lib.rs b/crates/rp2350-emu/src/lib.rs
+index 5c10c34..3b887b6 100644
+--- a/crates/rp2350-emu/src/lib.rs
++++ b/crates/rp2350-emu/src/lib.rs
+@@ -1185,7 +1185,7 @@ impl Emulator {
+     /// SIO/PIO produced; mask-set bits reflect `gpio_external_in`.
+     pub(crate) fn update_gpio(&mut self) {
+         let mut out_lo = self.bus.sio.gpio_out & self.bus.sio.gpio_oe;
+-        let mut out_hi = 0u32;
++        let mut out_hi = self.bus.sio.gpio_hi_out & self.bus.sio.gpio_hi_oe;
+         for pio in &self.bus.pio {
+             let (pio_out_lo, pio_out_hi) = pio.local_to_physical_pins(pio.pad_out);
+             let (pio_oe_lo, pio_oe_hi) = pio.local_to_physical_pins(pio.pad_oe);
+diff --git a/crates/rp2350-emu/src/sio/mod.rs b/crates/rp2350-emu/src/sio/mod.rs
+index 80494c0..01b129a 100644
+--- a/crates/rp2350-emu/src/sio/mod.rs
++++ b/crates/rp2350-emu/src/sio/mod.rs
+@@ -37,6 +37,10 @@ pub struct Sio {
+     pub gpio_out: u32,
+     /// SIO GPIO output enable register (offset 0x030).
+     pub gpio_oe: u32,
++    /// SIO GPIO_HI_OUT (0x014), bits 0..15 = GPIO 32..47 (psd2 Ergaenzung).
++    pub gpio_hi_out: u32,
++    /// SIO GPIO_HI_OE (0x034).
++    pub gpio_hi_oe: u32,
+     /// Inter-processor FIFO: Core 0 writes -> Core 1 reads.
+     fifo_to_core1: Fifo,
+     /// Inter-processor FIFO: Core 1 writes -> Core 0 reads.
+@@ -79,6 +83,8 @@ impl Sio {
+         Self {
+             gpio_out: 0,
+             gpio_oe: 0,
++            gpio_hi_out: 0,
++            gpio_hi_oe: 0,
+             fifo_to_core1: Fifo::new(),
+             fifo_to_core0: Fifo::new(),
+             fifo_wof: [false; 2],
+@@ -139,6 +145,8 @@ impl Sio {
+     pub fn reset(&mut self) {
+         self.gpio_out = 0;
+         self.gpio_oe = 0;
++        self.gpio_hi_out = 0;
++        self.gpio_hi_oe = 0;
+         self.fifo_to_core1 = Fifo::new();
+         self.fifo_to_core0 = Fifo::new();
+         self.fifo_wof = [false; 2];
+@@ -163,6 +171,8 @@ impl Sio {
+             0x000 => core as u32,   // CPUID
+             0x010 => self.gpio_out, // GPIO_OUT
+             0x030 => self.gpio_oe,  // GPIO_OE
++            0x014 => self.gpio_hi_out,
++            0x034 => self.gpio_hi_oe,
+             // FIFO
+             0x050 => self.fifo_st_read(core),
+             0x058 => self.fifo_rd(core),
+@@ -203,6 +213,15 @@ impl Sio {
+             0x038 => self.gpio_oe |= val,  // GPIO_OE_SET
+             0x040 => self.gpio_oe &= !val, // GPIO_OE_CLR
+             0x048 => self.gpio_oe ^= val,  // GPIO_OE_XOR
++            // GPIO_HI_OUT/OE (nur GPIO 32..47 modelliert)
++            0x014 => self.gpio_hi_out = val & 0xFFFF,
++            0x01C => self.gpio_hi_out |= val & 0xFFFF,
++            0x024 => self.gpio_hi_out &= !val,
++            0x02C => self.gpio_hi_out ^= val & 0xFFFF,
++            0x034 => self.gpio_hi_oe = val & 0xFFFF,
++            0x03C => self.gpio_hi_oe |= val & 0xFFFF,
++            0x044 => self.gpio_hi_oe &= !val,
++            0x04C => self.gpio_hi_oe ^= val & 0xFFFF,
+             // FIFO
+             0x050 => self.fifo_st_write(val, core),
+             0x054 => self.fifo_wr(val, core),

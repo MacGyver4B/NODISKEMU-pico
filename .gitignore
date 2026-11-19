@@ -17,3 +17,6 @@ config
 # Qt Creator project files:
 NODISKEMU.*
 releases/
+# petSD2 / pico
+pico/build/
+pico/build-emu/

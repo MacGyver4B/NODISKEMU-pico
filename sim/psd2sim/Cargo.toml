@@ -1,0 +1,17 @@
+[package]
+name = "psd2sim"
+version = "0.1.0"
+edition = "2021"
+description = "Bruecke: NODISKEMU-pico in picoem an VICE (simlink, IEEE-488 + IEC)"
+
+[dependencies]
+# picoem (https://github.com/0x4d44/picoem) neben diesem Verzeichnis
+# auschecken und ../picoem.patch anwenden, siehe README.md
+rp2350-emu = { path = "../picoem/crates/rp2350-emu" }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
+debug = false

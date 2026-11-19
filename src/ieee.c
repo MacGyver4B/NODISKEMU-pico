@@ -34,8 +34,12 @@
 
 #include "config.h"
 
+#ifdef __AVR__
 #include <avr/io.h>
 #include <avr/pgmspace.h>
+#else
+#include "progmem.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +65,9 @@
 #include "timer.h"
 #include "menu.h"
 #include "eeprom-conf.h"
+#ifdef CONFIG_IEC_RELAY
+#include "iecrelay.h"
+#endif
 
 // -------------------------------------------------------------------------
 //  Global variables
@@ -127,6 +134,7 @@ static inline void ieee488_SetNDAC(bool x);
 static inline void ieee488_SetNRFD(bool x);
 
 
+#ifndef HAVE_ARCH_IEEE_LL
 /* --------------------------------------------------------------------------------------
    IFC handling
 
@@ -410,6 +418,16 @@ static inline void ieee488_InitAtnInterrupt(void) {
 }
 
 
+#else /* HAVE_ARCH_IEEE_LL: Leitungszugriffe aus arch-config.h */
+
+static inline bool ieee488_CheckIFC(void) {
+  if (ieee488_IFC()) return false;
+  ieee488_IFCreceived = true;
+  return true;
+}
+
+#endif /* HAVE_ARCH_IEEE_LL */
+
 // TE=0: listen mode, TE=1: talk mode
 volatile bool ieee488_TE75160; // bus driver for data lines
 volatile bool ieee488_TE75161; // bus driver for control lines
@@ -449,8 +467,10 @@ void ieee488_Init(void) {
   device_address = device_hw_address();
   ieee488_InitDC();
   ieee488_SetDC(DC_DEVICE);
+#ifndef HAVE_ARCH_IEEE_LL
   IEEE_DDR_TE  |= _BV(IEEE_PIN_TE);             // TE  as output
   IEEE_DDR_ATN &= ~_BV(IEEE_PIN_ATN);           // ATN as input
+#endif
   ieee488_DataListen();
   ieee488_CtrlPortsListen();
   ieee488_BusIdle();
@@ -696,6 +716,73 @@ void ieee488_TalkLoop(uint8_t sa) {
 }
 
 
+#ifdef CONFIG_IEC_RELAY
+/* ---------------- Relais zu IEC-Laufwerken (iecrelay.c) ---------------- */
+
+enum { RL_IDLE, RL_LISTEN, RL_TALK };
+static uint8_t relay_role;
+static bool    relay_talk_pending;
+
+static void relay_ListenLoop(void) {
+  char c;
+  uint8_t r;
+  for (;;) {
+    r = ieee488_RxByte(&c);
+    if (r == RX_ATN || r == RX_IFC)
+      return;
+    relay_rx((uint8_t)c);
+  }
+}
+
+/* wie ieee488_TalkLoop, Bytes aus dem Relais */
+static void relay_TalkLoop(uint8_t sa) {
+  uint8_t c;
+  bool eoi;
+
+  ieee488_CtrlPortsTalk();
+  for (;;) {
+    ieee488_SetDAV(1);
+    ieee488_SetEOI(1);
+    while (ieee488_NDAC()) {              // auf NDAC low warten
+      if (ieee488_ATN_received) { ieee488_BusIdle(); return; }
+      if (ieee488_CheckIFC()) return;
+    }
+    while (!ieee488_NRFD()) {             // auf NRFD high warten
+      if (ieee488_ATN_received) return;
+      if (ieee488_CheckIFC()) return;
+    }
+    if (!relay_peek(sa, &c, &eoi)) {      // nichts (mehr) zu liefern: schweigen
+      while (!ieee488_ATN_received)
+        if (ieee488_CheckIFC()) return;
+      return;
+    }
+    if (ieee488_NDAC() || ieee488_ATN_received) { ieee488_BusIdle(); return; }
+    ieee488_SetEOI(eoi ? 0 : 1);
+    if (ieee488_TE75160 != TE_TALK)
+      ieee488_DataTalk();
+    ieee488_SetData(c);
+    ieee488_SetDAV(0);
+    while (ieee488_NRFD()) {
+      if (ieee488_NDAC() || ieee488_ATN_received) {
+        ieee488_SetDAV(1); ieee488_SetEOI(1); ieee488_BusIdle(); return;
+      }
+      if (ieee488_CheckIFC()) return;
+    }
+    while (!ieee488_NDAC()) {             // Byte angenommen
+      if (ieee488_ATN_received) { ieee488_SetDAV(1); ieee488_SetEOI(1); return; }
+      if (ieee488_CheckIFC()) return;
+    }
+    relay_advance(sa);
+    if (eoi) {
+      ieee488_SetDAV(1);
+      ieee488_SetEOI(1);
+      relay_role = RL_IDLE;
+      return;
+    }
+  }
+}
+#endif
+
 void ieee488_Unlisten(void) {
   uart_puts_P(PSTR("ULN\r\n"));
   ieee488_BusIdle();
@@ -756,6 +843,18 @@ void handle_ieee488(void) {
     // Fetch all commands sent in the same ATN-low-cycle
 
     ieee488_SetNDAC(0);
+#ifdef CONFIG_IEC_RELAY
+    if (relay_talk_pending) {
+      // Sekundaerbefehl nach TALK ans Relais: NRFD noch halten, das PET-
+      // Kernal legt das Byte schon vor dem Warten auf NRFD an
+      relay_talk_pending = false;
+      if (ieee488_TE75160 != TE_LISTEN) ieee488_DataListen();
+      delay_us(300);
+      uint8_t nx = ieee488_Data();
+      if (!ieee488_ATN() && (nx & 0xf0) == IEEE_SECONDARY)
+        relay_prefetch(nx & 0x0f);
+    }
+#endif
     ieee488_SetNRFD(1);                   // Say ready for data
     if (ieee488_TE75160 != TE_LISTEN) ieee488_DataListen();
 
@@ -792,6 +891,53 @@ void handle_ieee488(void) {
 
     uart_puthex(cmd); uart_putc(' ');
 
+#ifdef CONFIG_IEC_RELAY
+    if (cmd == IEEE_UNLISTEN && relay_role == RL_LISTEN) {
+      relay_role = RL_IDLE;
+      relay_unlisten();
+    } else if (cmd == IEEE_UNTALK && relay_role == RL_TALK) {
+      relay_role = RL_IDLE;
+    } else if (cmd3 == IEEE_TALK && relay_role == RL_TALK && Device != relay_ieee_unit) {
+      relay_role = RL_IDLE;               // anderes Geraet spricht
+    }
+    if ((cmd3 == IEEE_LISTEN || cmd3 == IEEE_TALK) && Device == relay_ieee_unit &&
+        !relay_present()) {
+      // kein Laufwerk am IEC-Bus: nicht mitspielen, der PET meldet
+      // ?DEVICE NOT PRESENT, weil niemand die Daten annimmt
+      relay_role = RL_IDLE;
+      relay_talk_pending = false;
+      ieee488_ListenActive = false;
+      ieee488_TalkingDevice = 0;
+      continue;
+    }
+    if (cmd3 == IEEE_LISTEN && Device == relay_ieee_unit) {
+      relay_role = RL_LISTEN;
+      ieee488_ListenActive = false;
+      ieee488_TalkingDevice = 0;
+      continue;
+    } else if (cmd3 == IEEE_TALK && Device == relay_ieee_unit) {
+      relay_role = RL_TALK;
+      relay_talk_pending = true;
+      ieee488_ListenActive = false;
+      ieee488_TalkingDevice = 0;
+      continue;
+    } else if (relay_role != RL_IDLE && (cmd4 == IEEE_SECONDARY || cmd4 == IEEE_OPEN || cmd4 == IEEE_CLOSE)) {
+      if (cmd4 == IEEE_CLOSE) {
+        relay_close(sa);
+        continue;
+      }
+      while (!ieee488_ATN())              // ATN-Ende abwarten
+        if (ieee488_CheckIFC()) return;
+      if (relay_role == RL_LISTEN) {
+        if (cmd4 == IEEE_OPEN) relay_open_begin(sa);
+        else                   relay_data_begin(sa);
+        relay_ListenLoop();
+      } else if (cmd4 == IEEE_SECONDARY) {
+        relay_TalkLoop(sa);
+      }
+      continue;
+    }
+#endif
     if (cmd == IEEE_UNLISTEN)             // UNLISTEN
       ieee488_Unlisten();
     else if (cmd == IEEE_UNTALK)          // UNTALK
@@ -872,6 +1018,9 @@ void handle_card_changes(void) {
 
 void ieee_mainloop(void) {
   ieee488_InitIFC();
+#ifdef CONFIG_IEC_RELAY
+  relay_init();
+#endif
   set_error(ERROR_DOSVERSION);
   for (;;) {
     for (uint8_t i = BUS_RATIO; i != 0; i--) handle_ieee488();

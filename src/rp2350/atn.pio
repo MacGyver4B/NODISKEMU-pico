@@ -1,0 +1,8 @@
+; atn.pio - meldet die fallende ATN-Flanke als PIO-IRQ 0
+; in_pins = ATN_I (GPIO 27)
+.program atn
+.wrap_target
+    wait 0 pin 0        ; ATN aktiv
+    irq set 0           ; ISR quittiert am Bus
+    wait 1 pin 0        ; auf Ende des ATN-Zyklus warten
+.wrap

@@ -1,0 +1,16 @@
+; ar6put.pio - AR6: ein Byte Rechner -> Laufwerk (wie relay.c ar_put)
+;
+; 1 PIO-Takt = 1 us (Teiler = sys_clk / 1 MHz). out_base = CLK_O (43),
+; 2 Pins: Bit 0 = CLK_O, Bit 1 = DATA_O; Pegel 1 = Leitung frei (74LS07).
+; Das Wort enthaelt 6 Zustaende zu je 2 Bit: Freigabe, 4 Paare, DATA low.
+; Zeiten ab Freigabe T0: Paare bei +8/+18/+34/+44, DATA low bei +57.
+.program ar6put
+    pull block
+    out pins, 2 [7]     ; T0: beide frei, 8 us
+    out pins, 2 [9]     ; +8  Paar 1
+    out pins, 2 [15]    ; +18 Paar 2
+    out pins, 2 [9]     ; +34 Paar 3
+    out pins, 2 [12]    ; +44 Paar 4
+    out pins, 2         ; +57 DATA low, bleibt stehen
+    out null, 20        ; Rest verwerfen
+    push block          ; fertig melden

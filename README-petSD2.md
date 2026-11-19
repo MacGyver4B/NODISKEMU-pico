@@ -1,0 +1,83 @@
+# NODISKEMU-pico – petSD2+IEC
+
+Fork von [NODISKEMU](https://github.com/nils-eilers/NODISKEMU) (Stand 1.2.0) mit einer
+Portierung auf den RP2350 (Raspberry Pi Pico 2, hier das Olimex RP2350-PICO2-XXL) und
+einem Relais vom IEEE-488-Bus des PET zu seriellen IEC-Laufwerken (1541, 1571, 1581).
+
+Der AVR-Build (petSD+, Makefile) bleibt unverändert. Alles Neue steckt in eigenen
+Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
+`CONFIG_IEC_RELAY` abgegrenzt.
+
+## Inhalt
+
+| Pfad | Inhalt |
+|---|---|
+| `src/rp2350/` | Arch-Schicht: IEEE-Leitungen (SIO), ATN per PIO-IRQ, SD an SPI1, UART0, SysTick, DWT-Zeitbasis, IEC-Pins, AR6-Senden per PIO |
+| `src/iecrelay.c/.h` | Relais IEEE → IEC: Namen/Befehle/Daten weiterreichen, Kanal vorab holen, AR6-Schnelllader (LOAD 1541/1571/1581, SAVE 1541/1571 einseitig) |
+| `configs/config-petSD2` | NODISKEMU-Konfiguration |
+| `pico/` | CMake-Build mit dem pico-sdk, Board-Header `olimex_pico2_xxl` |
+| `sim/psd2sim/` | Brücke: Firmware in [picoem](https://github.com/0x4d44/picoem) an VICE (simlink, IEEE + IEC), SD-Kartenmodell, Testskripte |
+| `sim/picoem.patch` | nötige Korrekturen an picoem |
+
+## Belegung (GPIO)
+
+| GPIO | Funktion |
+|---|---|
+| 16–23 | IEEE D1–D8 (74FCT621A) |
+| 26 | DIR Datenleitungen (high = senden) |
+| 27–33 | IEEE ATN, IFC, REN, EOI, DAV, NRFD, NDAC – Eingänge |
+| 34–38 | IEEE EOI, DAV, NRFD, NDAC, SRQ – Ausgänge (low = Leitung ziehen) |
+| 39–42 | IEC CLK, DATA, ATN, SRQ – Eingänge über 74LVC14A (invertiert) |
+| 43–47 | IEC CLK, DATA, ATN, SRQ, RESET – Ausgänge über 74LS07 |
+| 9/10/11/24 | microSD CS, CLK, CMD, DAT0 (SPI1) |
+| 0/1 | UART0 Debug |
+| 25 | LED |
+
+## Bauen
+
+```sh
+export PICO_SDK_PATH=/pfad/zum/pico-sdk        # getestet mit 2.1.1
+cd pico
+mkdir build && cd build && cmake .. && make    # petsd2.uf2 für die Hardware
+```
+
+Für die Simulation: `cmake -DPSD2_EMU=1 ..` in `pico/build-emu`. Diese Variante
+umgeht Bootrom-Funktionen, die picoem nicht nachbildet, und spricht SD-Karte und
+Debugausgabe über ein Postfach im RAM an (`src/rp2350/emu.h`).
+
+## AR6-Schnelllader
+
+Der Laufwerkscode des Action Replay 6 ist nicht Teil der Firmware. Die Firmware liest
+beim Start `AR6.CRT` (Action Replay V6.0, CRT-Format) aus dem Wurzelverzeichnis der
+SD-Karte. Fehlt die Datei, arbeitet das Relais mit dem normalen seriellen Protokoll.
+
+## Simulation und Tests
+
+Voraussetzungen neben `sim/`: `picoem/` (mit `picoem.patch`) und `vice-lre-simlink/`
+(VICE-Fork, Zweig `simlink`, gebaut). Pfade lassen sich in `sim/psd2sim/env.sh`
+überschreiben.
+
+```sh
+cd sim/psd2sim && cargo build --release
+AR6CRT=/pfad/ar6.crt ./test/mkwork.sh          # Testdaten nach $WORK (/tmp/psd)
+./test/run-tests.sh                             # 35 DOS-Tests an der SD-Karte
+./test/run-relay-tests.sh                       # Relais: std1541 ar1541 ar1571 ar1581 absent
+./test/run-relay-tests.sh ss1571 ds1571 std1581 # weitere Fälle
+```
+
+Ergebnisse (Stand 19.11.2026, PET 4032 in xpet, 23.104 Bytes, alles bytegleich):
+
+| Fall | LOAD | SAVE |
+|---|---|---|
+| SD-Karte FAT/D64/D82 | ~4.950 B/s | ~5.100 B/s |
+| 1541 AR6 | 4.628 B/s (IEC) | AR6 |
+| 1571 einseitig, AR6 im 1541-Modus | 4.183 B/s (IEC) | AR6 |
+| 1571 doppelseitig | AR6 bis Spur 35, dann normal | normal |
+| 1581 AR6 | 6.143 B/s (IEC) | normal |
+
+Bekannte Lücken: Burst (1571/1581), Konfiguration im Flash, RTC; REL-Dateien in Images
+fehlen schon in NODISKEMU selbst.
+
+## Lizenz
+
+GPL-2.0 wie NODISKEMU (siehe `COPYING`).
