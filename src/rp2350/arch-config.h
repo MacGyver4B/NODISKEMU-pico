@@ -1,16 +1,19 @@
 /* arch-config.h - NODISKEMU auf petSD2+IEC (RP2350B, Olimex PICO2-XXL)
 
-   Belegung laut Konzept (18.11.):
-     16-23  IEEE D1-D8 (74FCT621A #1), 26 DIR (high = senden)
-     27 ATN_I  28 IFC_I  29 REN_I  30 EOI_I  31 DAV_I  32 NRFD_I  33 NDAC_I
-     34 EOI_O  35 DAV_O  36 NRFD_O  37 NDAC_O  38 SRQ_O
+   IEEE-488 wie beim petSD+ ueber SN75160 (Daten) und SN75161 (Steuerung),
+   DC fest auf high (Geraet), ein gemeinsames TE fuer beide Bausteine.
+   Alle 7516x-Leitungen liegen auf 5-V-toleranten GPIOs (< 40, RP2350 A4):
+     16-23  D1-D8 (75160)
+     26     TE (high = sprechen)
+     27 ATN  28 IFC  29 REN            immer Eingang
+     30 EOI  31 DAV                    Ausgang beim Sprechen, sonst Eingang
+     32 NRFD 33 NDAC                   Ausgang beim Hoeren, sonst Eingang
+     34 SRQ                            Ausgang (frei = high)
      9/10/11/24 microSD (CS, CLK, CMD, DAT0), 25 LED
 
-   Die 621 sind Open Drain und nicht invertierend: ein Ausgangspin auf
-   low zieht die Busleitung, high gibt sie frei. Eingaenge zeigen den
-   Buspegel direkt. Ein- und Ausgaenge sind getrennt, deshalb gibt es
-   keine Richtungsumschaltung fuer die Steuerleitungen (TE/DC des
-   75160/75161 entfallen); nur die Datenleitungen haben DIR.
+   Pegel wie am Bus: Pin low = Leitung low. Beim Umschalten von TE gilt die
+   Reihenfolge des petSD+ (ieee.c), damit MCU und Treiber eine Leitung nie
+   gleichzeitig treiben.
 
    Alle Zugriffe gehen direkt auf die SIO-Register, das ist schnell und
    laeuft auch in picoem (dort ohne GPIO-Coprozessor). */
@@ -41,19 +44,15 @@ typedef unsigned int rawbutton_t;
 /* ----- Pins ----- */
 
 #define PSD2_D_BASE   16
-#define PSD2_DIR      26
-#define PSD2_ATN_I    27
-#define PSD2_IFC_I    28
-#define PSD2_REN_I    29
-#define PSD2_EOI_I    30
-#define PSD2_DAV_I    31
-#define PSD2_NRFD_I   32
-#define PSD2_NDAC_I   33
-#define PSD2_EOI_O    34
-#define PSD2_DAV_O    35
-#define PSD2_NRFD_O   36
-#define PSD2_NDAC_O   37
-#define PSD2_SRQ_O    38
+#define PSD2_TE       26
+#define PSD2_ATN      27
+#define PSD2_IFC      28
+#define PSD2_REN      29
+#define PSD2_EOI      30
+#define PSD2_DAV      31
+#define PSD2_NRFD     32
+#define PSD2_NDAC     33
+#define PSD2_SRQ      34
 #define PSD2_LED      25
 
 #define PSD2_D_MASK   (0xffu << PSD2_D_BASE)
@@ -116,22 +115,26 @@ extern volatile bool ieee488_ATN_received;
 
 static inline void ieee_interface_init(void) {}
 
-static inline uint8_t ieee488_ATN(void)  { return (psd2_in_lo() & LO(PSD2_ATN_I))  != 0; }
-static inline uint8_t ieee488_IFC(void)  { return (psd2_in_lo() & LO(PSD2_IFC_I))  != 0; }
-static inline uint8_t ieee488_EOI(void)  { return (psd2_in_lo() & LO(PSD2_EOI_I))  != 0; }
-static inline uint8_t ieee488_DAV(void)  { return (psd2_in_lo() & LO(PSD2_DAV_I))  != 0; }
-static inline uint8_t ieee488_NRFD(void) { return (psd2_in_hi() & HI(PSD2_NRFD_I)) != 0; }
-static inline uint8_t ieee488_NDAC(void) { return (psd2_in_hi() & HI(PSD2_NDAC_I)) != 0; }
+static inline uint8_t ieee488_ATN(void)  { return (psd2_in_lo() & LO(PSD2_ATN))  != 0; }
+static inline uint8_t ieee488_IFC(void)  { return (psd2_in_lo() & LO(PSD2_IFC))  != 0; }
+static inline uint8_t ieee488_EOI(void)  { return (psd2_in_lo() & LO(PSD2_EOI))  != 0; }
+static inline uint8_t ieee488_DAV(void)  { return (psd2_in_lo() & LO(PSD2_DAV))  != 0; }
+static inline uint8_t ieee488_NRFD(void) { return (psd2_in_hi() & HI(PSD2_NRFD)) != 0; }
+static inline uint8_t ieee488_NDAC(void) { return (psd2_in_hi() & HI(PSD2_NDAC)) != 0; }
 
-static inline void psd2_out(uint32_t hibit, bool x) {
-  if (x) sio_hw->gpio_hi_set = hibit;     /* Leitung frei */
-  else   sio_hw->gpio_hi_clr = hibit;     /* Leitung ziehen */
+/* Ausgangswert setzen; ob er am Bus ankommt, entscheidet die Richtung */
+static inline void ieee488_SetEOI(bool x) {
+  if (x) sio_hw->gpio_set = LO(PSD2_EOI); else sio_hw->gpio_clr = LO(PSD2_EOI);
 }
-
-static inline void ieee488_SetEOI(bool x)  { psd2_out(HI(PSD2_EOI_O), x); }
-static inline void ieee488_SetDAV(bool x)  { psd2_out(HI(PSD2_DAV_O), x); }
-static inline void ieee488_SetNRFD(bool x) { psd2_out(HI(PSD2_NRFD_O), x); }
-static inline void ieee488_SetNDAC(bool x) { psd2_out(HI(PSD2_NDAC_O), x); }
+static inline void ieee488_SetDAV(bool x) {
+  if (x) sio_hw->gpio_set = LO(PSD2_DAV); else sio_hw->gpio_clr = LO(PSD2_DAV);
+}
+static inline void ieee488_SetNRFD(bool x) {
+  if (x) sio_hw->gpio_hi_set = HI(PSD2_NRFD); else sio_hw->gpio_hi_clr = HI(PSD2_NRFD);
+}
+static inline void ieee488_SetNDAC(bool x) {
+  if (x) sio_hw->gpio_hi_set = HI(PSD2_NDAC); else sio_hw->gpio_hi_clr = HI(PSD2_NDAC);
+}
 
 /* Daten: Bus low = logisch 1 (wie beim AVR invertiert) */
 static inline uint8_t ieee488_Data(void) {
@@ -143,38 +146,42 @@ static inline void ieee488_SetData(uint8_t data) {
                      ((uint32_t)(uint8_t)~data << PSD2_D_BASE);
 }
 
+static inline void ieee488_SetTE(bool x) {
+  if (x) sio_hw->gpio_set = LO(PSD2_TE); else sio_hw->gpio_clr = LO(PSD2_TE);
+}
+
+/* Datenleitungen: Richtung der GPIOs; TE schaltet CtrlPorts* (gemeinsam) */
 static inline void ieee488_DataListen(void) {
-  sio_hw->gpio_oe_clr = PSD2_D_MASK;      /* erst loslassen ... */
-  sio_hw->gpio_clr = LO(PSD2_DIR);        /* ... dann 621 auf Empfang */
+  sio_hw->gpio_oe_clr = PSD2_D_MASK;      /* Daten als Eingang */
   ieee488_TE75160 = 0;
 }
 
 static inline void ieee488_DataTalk(void) {
   sio_hw->gpio_set = PSD2_D_MASK;         /* alle Leitungen frei */
-  sio_hw->gpio_oe_set = PSD2_D_MASK;
-  sio_hw->gpio_set = LO(PSD2_DIR);        /* 621 auf Senden */
+  sio_hw->gpio_oe_set = PSD2_D_MASK;      /* Daten als Ausgang */
   ieee488_TE75160 = 1;
 }
 
-/* Steuerleitungen: Open Drain, nur die jeweils fremden loslassen */
+/* Reihenfolge wie ieee.c beim petSD+ (HAVE_7516X) */
 static inline void ieee488_CtrlPortsListen(void) {
-  ieee488_SetDAV(1);
-  ieee488_SetEOI(1);
+  sio_hw->gpio_oe_clr = LO(PSD2_EOI) | LO(PSD2_DAV);       /* EOI, DAV Eingang */
+  ieee488_SetTE(0);
+  sio_hw->gpio_hi_oe_set = HI(PSD2_NDAC) | HI(PSD2_NRFD);  /* NDAC, NRFD Ausgang */
   ieee488_TE75161 = 0;
 }
 
 static inline void ieee488_CtrlPortsTalk(void) {
-  ieee488_SetNDAC(1);
-  ieee488_SetNRFD(1);
+  sio_hw->gpio_hi_oe_clr = HI(PSD2_NDAC) | HI(PSD2_NRFD);  /* NDAC, NRFD Eingang */
   ieee488_SetDAV(1);
   ieee488_SetEOI(1);
+  ieee488_SetTE(1);
+  sio_hw->gpio_oe_set = LO(PSD2_EOI) | LO(PSD2_DAV);       /* EOI, DAV Ausgang */
   ieee488_TE75161 = 1;
 }
 
 static inline void ieee488_InitIFC(void) {}
-static inline void ieee488_InitDC(void) {}
+static inline void ieee488_InitDC(void) {}           /* DC fest high */
 static inline void ieee488_SetDC(bool x) { (void)x; }
-static inline void ieee488_SetTE(bool x) { (void)x; }
 
 /* ATN: PIO-Zustandsmaschine meldet die fallende Flanke per IRQ,
    die Quittung (NRFD ziehen, NDAC frei) macht der ISR (ieee-ll.c) */

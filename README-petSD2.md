@@ -3,6 +3,7 @@
 Fork von [NODISKEMU](https://github.com/nils-eilers/NODISKEMU) (Stand 1.2.0) mit einer
 Portierung auf den RP2350 (Raspberry Pi Pico 2, hier das Olimex RP2350-PICO2-XXL) und
 einem Relais vom IEEE-488-Bus des PET zu seriellen IEC-Laufwerken (1541, 1571, 1581).
+Am IEEE-Bus arbeitet es wie der petSD+ mit SN75160/SN75161.
 
 Der AVR-Build (petSD+, Makefile) bleibt unverändert. Alles Neue steckt in eigenen
 Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
@@ -12,26 +13,37 @@ Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
 
 | Pfad | Inhalt |
 |---|---|
-| `src/rp2350/` | Arch-Schicht: IEEE-Leitungen (SIO), ATN per PIO-IRQ, SD an SPI1, UART0, SysTick, DWT-Zeitbasis, IEC-Pins, AR6-Senden per PIO |
+| `src/rp2350/` | Arch-Schicht: IEEE-Leitungen über SN75160/75161 (SIO), ATN per PIO-IRQ, SD an SPI1, UART0, SysTick, DWT-Zeitbasis, IEC-Pins, AR6-Senden per PIO |
 | `src/iecrelay.c/.h` | Relais IEEE → IEC: Namen/Befehle/Daten weiterreichen, Kanal vorab holen, AR6-Schnelllader (LOAD 1541/1571/1581, SAVE 1541/1571 einseitig) |
 | `configs/config-petSD2` | NODISKEMU-Konfiguration |
 | `pico/` | CMake-Build mit dem pico-sdk, Board-Header `olimex_pico2_xxl` |
-| `sim/psd2sim/` | Brücke: Firmware in [picoem](https://github.com/0x4d44/picoem) an VICE (simlink, IEEE + IEC), SD-Kartenmodell, Testskripte |
+| `sim/psd2sim/` | Brücke: Firmware in [picoem](https://github.com/0x4d44/picoem) an VICE (simlink, IEEE + IEC), Modell der SN75160/75161, SD-Kartenmodell, Testskripte |
 | `sim/picoem.patch` | nötige Korrekturen an picoem |
 
 ## Belegung (GPIO)
 
+IEEE-488 wie beim petSD+ über SN75160 (Daten) und SN75161 (Steuerung), DC fest
+auf high (Gerät), PE des 75160 auf low (Passiv-Pull-up), ein gemeinsames TE.
+Alle 7516x-Leitungen liegen auf GPIOs unter 40: Der RP2350 ist ab Stepping A4
+5-V-tolerant, die ADC-Pins (GPIO 40–47) aber nicht. IOVDD muss stehen, bevor
+die 7516x Pegel liefern.
+
 | GPIO | Funktion |
 |---|---|
-| 16–23 | IEEE D1–D8 (74FCT621A) |
-| 26 | DIR Datenleitungen (high = senden) |
-| 27–33 | IEEE ATN, IFC, REN, EOI, DAV, NRFD, NDAC – Eingänge |
-| 34–38 | IEEE EOI, DAV, NRFD, NDAC, SRQ – Ausgänge (low = Leitung ziehen) |
+| 16–23 | IEEE D1–D8 (75160) |
+| 26 | TE (75160 + 75161, high = sprechen) |
+| 27, 28, 29 | ATN, IFC, REN – immer Eingang |
+| 30, 31 | EOI, DAV – Ausgang beim Sprechen, sonst Eingang |
+| 32, 33 | NRFD, NDAC – Ausgang beim Hören, sonst Eingang |
+| 34 | SRQ – Ausgang (frei = high) |
 | 39–42 | IEC CLK, DATA, ATN, SRQ – Eingänge über 74LVC14A (invertiert) |
 | 43–47 | IEC CLK, DATA, ATN, SRQ, RESET – Ausgänge über 74LS07 |
-| 9/10/11/24 | microSD CS, CLK, CMD, DAT0 (SPI1) |
+| 9/10/11/24 | microSD CS, CLK, CMD, DAT0 (SPI1, auf dem Board) |
+| 8 | PSRAM CS (auf dem Board) |
 | 0/1 | UART0 Debug |
-| 25 | LED |
+| 25 | LED (auf dem Board) |
+
+Beim Start meldet die Firmware die Chip-Revision am Debug-UART (Revision ≤ 2 = A2).
 
 ## Bauen
 

@@ -1,16 +1,17 @@
-//! psd2sim - petSD2+IEC-Firmware (RP2350B) in picoem am simlink-IEEE-Bus
+//! psd2sim - petSD2+IEC-Firmware (RP2350B) in picoem an simlink-Bussen
 //!
-//!   psd2sim [-v] [-l vorausschau_us] firmware.bin bus
+//!   psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] firmware.bin ieeebus [iecbus]
 //!
 //! Wie petsdsim (simavr) eine Kopplung mit Vorausschau: Eingaenge vom Bus
 //! wirken L spaeter auf den RP2350, dafuer darf er bis Fortschritt der
-//! anderen + L rechnen. Die 74FCT621A (Open Drain, nicht invertierend)
-//! werden auf Pin-Ebene nachgebildet, Belegung laut Konzept (18.11.):
-//!   16-23 D1-D8 (621 #1, Richtung GPIO 26: high = senden)
-//!   27 ATN_I 28 IFC_I 29 REN_I 30 EOI_I 31 DAV_I 32 NRFD_I 33 NDAC_I
-//!   34 EOI_O 35 DAV_O 36 NRFD_O 37 NDAC_O 38 SRQ_O
-//! Ein Ausgang zieht die Leitung, wenn der Pin getrieben und low ist;
-//! ungetrieben liegt er per Pull-up auf high (= Leitung frei).
+//! anderen + L rechnen. Nachgebildet auf Pin-Ebene:
+//!   IEEE: SN75160/75161 (DC = high, Geraet), TE = GPIO 26 (high = sprechen)
+//!     16-23 D1-D8, 27 ATN, 28 IFC, 29 REN, 30 EOI, 31 DAV, 32 NRFD,
+//!     33 NDAC, 34 SRQ
+//!   IEC: 39-42 CLK/DATA/ATN/SRQ ueber 74LVC14A (invertiert),
+//!     43-47 CLK/DATA/ATN/SRQ/RESET ueber 74LS07 (Pin low = Leitung low)
+//! Ein Controller-Ausgang zieht die Leitung, wenn der Pin getrieben und low
+//! ist; ein offener Pin gilt am TTL-Eingang des Treibers als high.
 
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::Ordering;
@@ -182,18 +183,26 @@ impl Bridge {
                 let l = b.ext_pull | b.pub_pull;
                 let d = b.ext_data | b.pub_data;
                 if !b.iec {
-                    // 621: Eingang = Buspegel (high = frei)
+                    // SN75160/75161, DC = high (Geraet), TE = GPIO 26:
+                    // ATN, IFC, REN immer empfangen; TE low: EOI, DAV, Daten
+                    // empfangen; TE high: NRFD, NDAC empfangen. Bei TE high
+                    // und ATN aktiv empfaengt der 75161 auch EOI.
+                    let te = high(out, oe, 26);
+                    let atn_low = l & ATN != 0;
                     put(27, l & ATN == 0);
                     put(28, l & IFC == 0);
                     put(29, l & REN == 0);
-                    put(30, l & EOI == 0);
-                    put(31, l & DAV == 0);
-                    put(32, l & NRFD == 0);
-                    put(33, l & NDAC == 0);
-                    if !high(out, oe, 26) {
+                    if !te || atn_low {
+                        put(30, l & EOI == 0);
+                    }
+                    if !te {
+                        put(31, l & DAV == 0);
                         for i in 0..8 {
                             put(16 + i, d & (1 << i) == 0);
                         }
+                    } else {
+                        put(32, l & NRFD == 0);
+                        put(33, l & NDAC == 0);
                     }
                 } else {
                     // 74LVC14A invertiert: Pin high = Leitung low
@@ -220,18 +229,23 @@ impl Bridge {
             let mut p = 0u8;
             let mut d = 0u8;
             if !b.iec {
-                if pulled(out, oe, 34) { p |= EOI; }
-                if pulled(out, oe, 35) { p |= DAV; }
-                if pulled(out, oe, 36) { p |= NRFD; }
-                if pulled(out, oe, 37) { p |= NDAC; }
-                if pulled(out, oe, 38) { p |= SRQ; }
-                if high(out, oe, 26) {
+                // SN75160/75161: der Controller-Pin wird nur in Senderichtung
+                // auf den Bus gegeben; ein offener TTL-Eingang gilt als high
+                let te = high(out, oe, 26);
+                let atn_in = b.ext_pull & ATN != 0;
+                if te {
+                    if pulled(out, oe, 30) && !atn_in { p |= EOI; }
+                    if pulled(out, oe, 31) { p |= DAV; }
                     for i in 0..8 {
                         if pulled(out, oe, 16 + i) {
                             d |= 1 << i;
                         }
                     }
+                } else {
+                    if pulled(out, oe, 32) { p |= NRFD; }
+                    if pulled(out, oe, 33) { p |= NDAC; }
                 }
+                if pulled(out, oe, 34) { p |= SRQ; }
             } else {
                 // 74LS07: Pin low = Leitung low
                 if pulled(out, oe, 43) { p |= IEC_CLK; }
