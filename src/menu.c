@@ -50,6 +50,7 @@
 #include "wrapops.h"
 #include "fatops.h"     // pet2ascn()
 #include "doscmd.h"
+#include "multidrive.h"
 
 
 uint8_t menu_system_enabled = true;
@@ -126,6 +127,21 @@ static inline uint8_t min(uint8_t a, uint8_t b) {
 void lcd_update_device_addr(void) {
   if (lcd_current_screen == SCRN_STATUS) {
     lcd_home();
+#ifdef CONFIG_MULTIDRIVE
+    if (md_active) {
+      /* all addresses in the 16 columns left of the bus name */
+      uint8_t i, col = 0;
+      for (i = 0; i < MD_MAX_DEVICES; i++) {
+        if (md_dev[i].address) {
+          lcd_printf("#%d ", md_dev[i].address);
+          col += md_dev[i].address < 10 ? 3 : 4;
+        }
+      }
+      while (col++ < 16)
+        lcd_putc(' ');
+      return;
+    }
+#endif
     lcd_printf("Device ID: #%d ", device_address);
   }
 }
@@ -711,7 +727,11 @@ static void rom_menu_main(uint8_t y) {
   switch (y) {
     case 0: lcd_puts_P(PSTR("Exit menu")); break;
     case 1: lcd_puts_P(PSTR("Browse files")); break;
+#ifdef CONFIG_MULTIDRIVE
+    case 2: lcd_puts_P(PSTR("Configure drives")); break;
+#else
     case 2: lcd_puts_P(PSTR("Change device number")); break;
+#endif
     case 3:
       if (rtc_state == RTC_NOT_FOUND)
         lcd_printf("Clock not found");
@@ -917,6 +937,28 @@ cleanup:
   goto reread;
 }
 
+/* Main menu entry. The fastloader hook calls menu_browse_files directly */
+/* and stays on the drive the loader is using.                           */
+static bool browse_selected_drive(void) {
+#ifdef CONFIG_MULTIDRIVE
+  /* Several drives: ask which one, browse there, then switch back */
+  uint8_t saved_dev  = md_cur;
+  uint8_t saved_part = current_part;
+
+  if (md_active) {
+    bool exit_menu;
+
+    if (!md_browse_select())
+      return false;
+    exit_menu = menu_browse_files();
+    md_select(saved_dev);
+    current_part = saved_part;
+    return exit_menu;
+  }
+#endif
+  return menu_browse_files();
+}
+
 #ifdef HAVE_DUAL_INTERFACE
 #define MAIN_MENU_LAST_ENTRY 6
 #else
@@ -992,9 +1034,13 @@ bool menu(void) {
     if (!action) continue;
     lcd_clear();
     if      (mp == 1) {
-      if (menu_browse_files()) break;
+      if (browse_selected_drive()) break;
     }
+#ifdef CONFIG_MULTIDRIVE
+    else if (mp == 2) menu_drives();
+#else
     else if (mp == 2) menu_device_number();
+#endif
     else if (mp == 3) menu_set_clock();
     else if (mp == 4) menu_select_bus();
     else if (mp == 5) menu_adjust_contrast();

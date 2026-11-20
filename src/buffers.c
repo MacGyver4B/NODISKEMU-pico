@@ -32,6 +32,7 @@
 #include "ff.h"
 #include "led.h"
 #include "buffers.h"
+#include "multidrive.h"
 
 dh_t    matchdh;
 uint8_t ops_scratch[33];
@@ -42,8 +43,11 @@ buffer_t buffers[CONFIG_BUFFER_COUNT+1];
 /// The actual data buffers
 static uint8_t bufferdata[CONFIG_BUFFER_COUNT*256];
 
-/// Number of active data buffers + 16 * number of dirty buffers
+/// Number of active (non-system) data buffers
 uint8_t active_buffers;
+
+/// Number of dirty buffers
+uint8_t dirty_buffers;
 
 /**
  * callback_dummy - dummy function for the buffer callbacks
@@ -94,6 +98,9 @@ static void alloc_specific_buffer(uint8_t bufnum) {
     buffers[bufnum].secondary = BUFFER_SEC_SYSTEM;
     buffers[bufnum].refill    = callback_dummy;
     buffers[bufnum].cleanup   = callback_dummy;
+#ifdef CONFIG_MULTIDRIVE
+    buffers[bufnum].device    = md_cur;
+#endif
   }
 }
 
@@ -215,7 +222,7 @@ void free_buffer(buffer_t *buffer) {
   buffer->allocated = 0;
 
   if (buffer->dirty)
-    active_buffers -= 16;
+    dirty_buffers--;
   if (buffer->secondary < BUFFER_SEC_SYSTEM)
     active_buffers--;
 
@@ -240,6 +247,10 @@ uint8_t free_multiple_buffers(uint8_t flags) {
 
   for (i=0;i<CONFIG_BUFFER_COUNT;i++) {
     if (buffers[i].allocated) {
+#ifdef CONFIG_MULTIDRIVE
+      if ((flags & FMB_CUR_DEVICE) && buffers[i].device != md_cur)
+        continue;
+#endif
       if ((flags & FMB_FREE_SYSTEM) || buffers[i].secondary < BUFFER_SEC_SYSTEM) {
         if ((flags & FMB_FREE_STICKY) || !buffers[i].sticky) {
           if (flags & FMB_CLEAN) {
@@ -267,8 +278,16 @@ buffer_t *find_buffer(uint8_t secondary) {
   uint8_t i;
 
   for (i=0;i<CONFIG_BUFFER_COUNT+1;i++) {
-    if (buffers[i].allocated && buffers[i].secondary == secondary)
+    if (buffers[i].allocated && buffers[i].secondary == secondary) {
+#ifdef CONFIG_MULTIDRIVE
+      /* channels of other devices are invisible, system buffers and */
+      /* the error channel buffer are shared                         */
+      if (secondary < BUFFER_SEC_SYSTEM && i != ERRORBUFFER_IDX &&
+          buffers[i].device != md_cur)
+        continue;
+#endif
       return &buffers[i];
+    }
   }
   return NULL;
 }
@@ -278,12 +297,12 @@ buffer_t *find_buffer(uint8_t secondary) {
  * @buf: pointer to the buffer
  *
  * This function marks the given buffer as dirty, tracks
- * this in active_buffers and turns on the dirty LED.
+ * this in dirty_buffers and turns on the dirty LED.
  */
 void mark_buffer_dirty(buffer_t *buf) {
   if (!buf->dirty) {
     buf->dirty = 1;
-    active_buffers += 16;
+    dirty_buffers++;
     set_dirty_led(1);
   }
 }
@@ -293,12 +312,12 @@ void mark_buffer_dirty(buffer_t *buf) {
  * @buf: pointer to the buffer
  *
  * This function marks the given buffer as clean, tracks
- * this in active_buffers and turns off the dirty LED if required.
+ * this in dirty_buffers and turns off the dirty LED if required.
  */
 void mark_buffer_clean(buffer_t *buf) {
   if (buf->dirty) {
     buf->dirty = 0;
-    active_buffers -= 16;
+    dirty_buffers--;
     if (get_dirty_buffer_count() == 0)
       set_dirty_led(0);
   }

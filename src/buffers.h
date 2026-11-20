@@ -49,12 +49,15 @@
 #define FMB_CLEAN          (1<<0)
 #define FMB_FREE_SYSTEM    (1<<1)
 #define FMB_FREE_STICKY    (1<<2)
+#define FMB_CUR_DEVICE     (1<<3)  /* only buffers of the addressed device */
 #define FMB_ALL            (FMB_FREE_STICKY|FMB_FREE_SYSTEM)
 #define FMB_ALL_CLEAN      (FMB_FREE_STICKY|FMB_FREE_SYSTEM|FMB_CLEAN)
 #define FMB_USER           (FMB_FREE_STICKY)
 #define FMB_USER_CLEAN     (FMB_FREE_STICKY|FMB_CLEAN)
 #define FMB_UNSTICKY       (FMB_FREE_SYSTEM)
 #define FMB_UNSTICKY_CLEAN (FMB_FREE_SYSTEM|FMB_CLEAN)
+#define FMB_DEV_USER_CLEAN (FMB_FREE_STICKY|FMB_CLEAN|FMB_CUR_DEVICE)
+#define FMB_DEV_USER       (FMB_FREE_STICKY|FMB_CUR_DEVICE)
 
 typedef enum { DIR_FMT_CBM, DIR_FMT_CMD_SHORT, DIR_FMT_CMD_LONG } dirformat_t;
 
@@ -88,6 +91,7 @@ typedef struct buffer_s {
   uint8_t position;
   uint8_t secondary;
   uint8_t recordlen;
+  uint8_t device;    /* multi-drive: index of the allocating device */
   uint32_t fptr;  // FIXME: Missing from doc comment
   int     allocated:1;
   int     mustflush:1;
@@ -110,6 +114,7 @@ typedef struct buffer_s {
       date_t *match_start; /* Start matching date */
       date_t *match_end;   /* End matching date */
       uint8_t counter;     /* used for counting raw entries */
+      uint8_t nextpart;    /* partition to list after this one or 0xff */
     } dir;
     struct {
       FIL fh;              /* File access via FAT */
@@ -179,14 +184,17 @@ static inline void unstick_buffer(buffer_t *buf) {
 /* Returns pointer to buffer on success or NULL on failure */
 buffer_t *find_buffer(uint8_t secondary);
 
-/* Number of currently allocated buffers + 16 * number of write buffers */
+/* Number of currently allocated (non-system) buffers */
 extern uint8_t active_buffers;
 
+/* Number of dirty buffers */
+extern uint8_t dirty_buffers;
+
 /* Check if any buffers are free */
-#define check_free_buffers() ((active_buffers & 0x0f) < CONFIG_BUFFER_COUNT)
+#define check_free_buffers() (active_buffers < CONFIG_BUFFER_COUNT)
 
 /* Return the number of dirty buffers */
-#define get_dirty_buffer_count() (active_buffers >> 4)
+#define get_dirty_buffer_count() (dirty_buffers)
 
 /* Mark a buffer as write-buffer and sticky it */
 // Note: inline function is smaller than external on AVR with gcc 4.8.2
