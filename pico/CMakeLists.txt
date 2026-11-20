@@ -32,6 +32,7 @@ if(NOT cfg_rc EQUAL 0)
   message(FATAL_ERROR "configparser.pl fehlgeschlagen fuer ${PSD2_CONFIG}")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PSD2_CONFIG})
+file(STRINGS ${PSD2_CONFIG} PSD2_MD REGEX "^CONFIG_MULTIDRIVE=y")
 add_executable(petsd2
   ${NDE}/buffers.c ${NDE}/fatops.c ${NDE}/fileops.c ${NDE}/main.c
   ${NDE}/errormsg.c ${NDE}/doscmd.c ${NDE}/ff.c ${NDE}/d64ops.c
@@ -42,6 +43,9 @@ add_executable(petsd2
   ${NDE}/rp2350/uart.c ${NDE}/rp2350/uart_hw.c ${NDE}/rp2350/crc.c
   ${NDE}/rp2350/ieee-ll.c ${NDE}/rp2350/iec-host.c
 )
+if(PSD2_MD)
+  target_sources(petsd2 PRIVATE ${NDE}/multidrive.c)
+endif()
 pico_generate_pio_header(petsd2 ${NDE}/rp2350/atn.pio)
 pico_generate_pio_header(petsd2 ${NDE}/rp2350/ar6put.pio)
 # -iquote: src/time.h usw. duerfen die <time.h> der C-Bibliothek nicht verdecken
