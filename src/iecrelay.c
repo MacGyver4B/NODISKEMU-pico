@@ -259,7 +259,7 @@ static void ar_load_crt(void) {
   UINT got;
   uint8_t h[64], ch[16];
   ar_ok = false;
-  if (f_open(&partition[0].fatfs, &f, (const UCHAR *)"AR6.CRT", FA_READ) != FR_OK)
+  if (f_open(partition[0].fatfs, &f, (const UCHAR *)"AR6.CRT", FA_READ) != FR_OK)
     return;
   if (f_read(&f, h, 64, &got) != FR_OK || got != 64 || memcmp(h, "C64 CARTRIDGE", 13))
     goto out;
