@@ -54,6 +54,8 @@ uint8_t     md_device_lost;
 uint8_t     md_layout_changed;
 uint8_t     md_cur;
 uint8_t     md_drive_given;
+uint8_t     md_drive_req;
+uint8_t     md_drive_exact;
 
 #define MD_MAX_SLOTS (MD_MAX_DEVICES * MD_DRIVES)
 

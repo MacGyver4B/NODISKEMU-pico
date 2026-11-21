@@ -630,6 +630,7 @@ static void load_directory(uint8_t secondary) {
       /* Command string is two characters long, parse the drive */
 #ifdef CONFIG_MULTIDRIVE
       md_drive_given = 1;
+      md_drive_req   = command_buffer[1] - '0';
       if (md_active && isdigit(command_buffer[1]))
         path.part = md_drive_slot(command_buffer[1] - '0');
       else
@@ -713,6 +714,9 @@ scandone:
     if (md_active) {
       /* CBM style: the header line number is the drive number */
       buf->data[HEADER_OFFSET_DRIVE] = md_slot_drive(path.part);
+      /* "$1" on a device without drive 1 lists drive 0 but says 1 */
+      if (md_drive_given && md_drive_req == 1)
+        buf->data[HEADER_OFFSET_DRIVE] = 1;
 
       /* no drive number on a dual drive: list drive 1 afterwards */
       if (md_is_dual() && !md_drive_given &&

@@ -1434,7 +1434,14 @@ static void parse_new(void) {
   clean_cmdbuffer();
 
   name = command_buffer+1;
+#ifdef CONFIG_MULTIDRIVE
+  /* N1: never formats drive 0 when the device has no drive 1 */
+  md_drive_exact = 1;
   part = parse_partition(&name);
+  md_drive_exact = 0;
+#else
+  part = parse_partition(&name);
+#endif
   if (part >= max_part) {
     set_error(ERROR_DRIVE_NOT_READY);
     return;

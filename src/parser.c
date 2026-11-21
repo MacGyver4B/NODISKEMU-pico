@@ -135,6 +135,7 @@ uint8_t parse_partition(uint8_t **buf) {
 #ifdef CONFIG_MULTIDRIVE
   if (md_active) {
     md_drive_given = digits;
+    md_drive_req   = part;
     if (!digits)
       return current_part;
     return md_drive_slot(part);
@@ -325,7 +326,14 @@ uint8_t parse_path(uint8_t *in, path_t *path, uint8_t **name, uint8_t for_cd) {
 
   if (for_cd || ustrchr(in, ':')) {
     /* Skip partition number */
+#ifdef CONFIG_MULTIDRIVE
+    /* CD1: needs a real drive 1, never change drive 0 instead */
+    md_drive_exact = for_cd;
     part=parse_partition(&in);
+    md_drive_exact = 0;
+#else
+    part=parse_partition(&in);
+#endif
     if(part>=max_part) {
       set_error(ERROR_DRIVE_NOT_READY);
       return 1;

@@ -52,6 +52,8 @@ extern uint8_t     md_active;       /* non-zero if a configuration was loaded */
 extern md_device_t md_dev[MD_MAX_DEVICES];
 extern uint8_t     md_cur;          /* index of the currently addressed device */
 extern uint8_t     md_drive_given;  /* last parsed name had an explicit drive */
+extern uint8_t     md_drive_req;    /* drive number given in that name       */
+extern uint8_t     md_drive_exact;  /* drive 1 must not fall back to drive 0 */
 extern uint8_t     md_device_lost;  /* md_init: addressed device is gone   */
 extern uint8_t     md_layout_changed; /* md_init: address list changed, cleared by the user */
 
@@ -113,11 +115,22 @@ uint8_t md_browse_select(void);
 /* Bus address of the currently addressed device */
 #define MD_CUR_ADDRESS (md_active ? md_dev[md_cur].address : device_address)
 
-/* Return the partition index of drive 0/1 of the current device */
+/* Return the partition index of drive 0/1 of the current device.     */
+/* A device without a drive 1 in PETSD.CFG answers "1:" with drive 0, */
+/* as a single-drive petSD+ did: SuperPET software (Waterloo          */
+/* "disk/1.", Super-OS/9) asks for drive 1 and finds the disk of      */
+/* drive 0. md_is_dual() stays false, so "$" and loading without a    */
+/* drive number still only use drive 0 and nothing is listed twice.   */
+/* While md_drive_exact is set (CD, N) there is no such fallback.     */
 static inline uint8_t md_drive_slot(uint8_t drive) {
+  uint8_t slot;
+
   if (drive >= MD_DRIVES)
     return MD_NO_SLOT;
-  return md_dev[md_cur].slot[drive];
+  slot = md_dev[md_cur].slot[drive];
+  if (slot == MD_NO_SLOT && drive == 1 && !md_drive_exact)
+    slot = md_dev[md_cur].slot[0];
+  return slot;
 }
 
 /* Return the drive number (0/1) a partition index belongs to */
@@ -133,6 +146,7 @@ static inline uint8_t md_is_dual(void) {
 #  define md_active      0
 #  define md_cur         0
 #  define md_drive_given 0
+#  define md_drive_req   0
 #  define md_device_lost 0
 #  define md_layout_changed 0
 #  define md_find(a)     ((a) == device_address ? 0 : MD_NO_DEVICE)
