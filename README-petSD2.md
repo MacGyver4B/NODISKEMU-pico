@@ -56,6 +56,32 @@ IEEE und IEC zusammen brauchen den RP2350B; ein RP2350A (GPIO 0–29) reicht nic
 | `olimex_rp2350_pico2_xl` | Olimex RP2350-PICO2-XL | 2 MB |
 | `olimex_rp2350_pico2_bb48` | Olimex RP2350-PICO2-BB48 (DIL 0,6") | 2 MB |
 | `olimex_rp2350_pico2_bb48r` | Olimex RP2350-PICO2-BB48R (DIL 0,6", mit PSRAM, microSD) | 16 MB |
+| `petsd2_dip40` | petSD2: XXL auf dem Adapter im DIP40-Sockel des petSD+ Rev. 2.4 | 16 MB |
+
+### petSD2 im DIP40-Sockel (`petsd2_dip40`)
+
+Belegung nach `pico/boards/petsd2_dip40.h` (Herleitung im docufolder,
+`petsd2/adapter-dip40-pinout.md`): IEEE wie oben ohne REN und SRQ (beim petSD+ nicht
+angeschlossen), LEDs dirty/busy an GPIO 4/5, SD-Schacht des petSD+ an SPI1
+(GPIO 12–15, Kartenschalter 2, Schreibschutz 3), I²C1 an GPIO 6/7 (ATtiny25 0x4C,
+DS3231 0xD0), LCD 20×4 an GPIO 25/29/34/35 (DB4–DB7), 36 (RS), 37 (E), Tasten an
+ADC7 (GPIO 47) hinter dem Teiler 56k/100k, IEC-Host ein 43–46, aus 38–42.
+
+Die Bedienung entspricht dem petSD+ (AVR): Startbild, Statusanzeige, Menü mit
+PREV/NEXT/SEL, Geräteadresse über die Tasten, wenn das Menü abgeschaltet ist,
+PREV beim Einschalten = Hardwaretest, NEXT = Kontrast einstellen. Benutzt werden
+`menu.c`, `menu-drives.c`, `rtc.c`, `ds1307-3231.c` wie beim AVR; neu für den RP2350
+sind nur die Hardwareschichten in `src/rp2350/` (`lcd.c`, `analog-buttons.c`,
+`i2c.c`/`i2c_hw.c`, `diagnose.c`, Entprellung in `arch-timer.c`). Jede Funktion
+lässt sich in der Konfiguration abschalten (`CONFIG_ONBOARD_DISPLAY`,
+`CONFIG_RTC_DSRTC`); ohne sie entsteht dieselbe Firmware wie für die anderen Boards.
+Die Tastenschwellen sind die des AVR: Der 12-Bit-Wert hinter dem Teiler wird auf
+die 10-Bit-Skala des AVR (Referenz 5 V) umgerechnet.
+
+Offen: Einstellungen aus dem Menü gehen beim Neustart verloren (das EEPROM liegt
+noch im RAM, siehe `src/rp2350/arch-eeprom.h`). Die Tastenmessung ist nicht mehr ratiometrisch
+(ADC gegen 3,3 V statt gegen die 5 V der Leiter); die Fenster des AVR vertragen nur
+etwa ±2 % auf der 5-V-Schiene (Details und Abhilfe im docufolder).
 
 Beim Start meldet die Firmware die Chip-Revision am Debug-UART (Revision ≤ 2 = A2).
 
@@ -66,6 +92,7 @@ export PICO_SDK_PATH=/pfad/zum/pico-sdk        # getestet mit 2.1.1
 cd pico
 mkdir build && cd build && cmake .. && make    # petsd2.uf2 für die Hardware
 # anderes Board: cmake -DPICO_BOARD=olimex_rp2350_pico2_bb48 ..
+# petSD2 im petSD+: cmake -DPICO_BOARD=petsd2_dip40 ..   (Konfiguration config-petSD2-dip40)
 ```
 
 Für die Simulation: `cmake -DPSD2_EMU=1 ..` in `pico/build-emu`. Diese Variante
@@ -94,6 +121,21 @@ AR6CRT=/pfad/ar6.crt ./test/mkwork.sh          # Testdaten nach $WORK (/tmp/psd)
 ./test/run-relay-tests.sh ss1571 ds1571 std1581 # weitere Fälle
 ```
 
+**petSD2 mit Bedienfeld** (Firmware aus `cmake -DPSD2_EMU=1 -DPICO_BOARD=petsd2_dip40`):
+`psd2sim -b dip40` bildet LCD, Tasten, ATtiny25 und DS3231 nach und zeigt beides
+auf einer Webseite (`-w port`, Vorgabe 8488): `http://localhost:8488/`. Tasten per
+Maus, Pfeil links/rechts/Eingabe oder Skript
+(`curl -X POST 'localhost:8488/key?k=SEL&ms=200'`, `&down=1`/`&down=0` zum Halten),
+die Anzeige als Text unter `/text`. `-k PREV` hält Tasten ab dem Start (Hardwaretest),
+`PSD2_LCDDUMP=1` schreibt jede Änderung der Anzeige ins Protokoll, `PSD2_TZ` setzt
+die Zeitzone der Uhr (Stunden, Vorgabe 1). Weil das Startbild 5 s steht, braucht
+xpet für die Tests eine Tastaturverzögerung:
+
+```sh
+export PSD2_BOARD=dip40 FW=../../pico/build-emu-dip40/petsd2.bin XARGS="-keybuf-delay 8000000"
+./test/run-tests.sh && ./test/run-relay-tests.sh
+```
+
 Ergebnisse (Stand 19.11.2026, PET 4032 in xpet, 23.104 Bytes, alles bytegleich):
 
 | Fall | LOAD | SAVE |
@@ -104,7 +146,7 @@ Ergebnisse (Stand 19.11.2026, PET 4032 in xpet, 23.104 Bytes, alles bytegleich):
 | 1571 doppelseitig | AR6 bis Spur 35, dann normal | normal |
 | 1581 AR6 | 6.143 B/s (IEC) | normal |
 
-Bekannte Lücken: Burst (1571/1581), Konfiguration im Flash, RTC; REL-Dateien in Images
+Bekannte Lücken: Burst (1571/1581), Konfiguration im Flash; REL-Dateien in Images
 fehlen schon in NODISKEMU selbst.
 
 ## Lizenz

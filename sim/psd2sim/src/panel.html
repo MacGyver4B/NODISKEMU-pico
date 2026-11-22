@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>petSD2 – Bedienfeld (psd2sim)</title>
+<style>
+  body { background:#2b2b2b; color:#ddd; font-family:system-ui,sans-serif; margin:0;
+         display:flex; flex-direction:column; align-items:center; padding:24px; }
+  h1 { font-size:16px; font-weight:600; margin:0 0 16px; color:#bbb; }
+  .board { background:#1d4d2b; border-radius:10px; padding:22px 26px; box-shadow:0 4px 16px #0008; }
+  .bezel { background:#111; padding:14px; border-radius:6px; }
+  canvas { display:block; image-rendering:pixelated; }
+  .row { display:flex; gap:18px; justify-content:center; margin-top:18px; align-items:center; }
+  button { width:72px; height:40px; border-radius:20px; border:2px solid #000; background:#444;
+           color:#eee; font-weight:600; cursor:pointer; user-select:none; }
+  button.on { background:#c9a227; color:#000; }
+  .leds { display:flex; gap:14px; font-size:12px; color:#9c9; }
+  .info { margin-top:14px; font-size:12px; color:#999; text-align:center; line-height:1.6; }
+  code { color:#cfc; }
+</style>
+</head>
+<body>
+<h1>petSD2 im petSD+ – LCD und Tasten (Simulation)</h1>
+<div class="board">
+  <div class="bezel"><canvas id="lcd" width="20" height="4"></canvas></div>
+  <div class="row">
+    <button id="PREV" title="Pfeil links">PREV</button>
+    <button id="NEXT" title="Pfeil rechts">NEXT</button>
+    <button id="SEL" title="Eingabe">SEL</button>
+  </div>
+</div>
+<div class="info" id="info"></div>
+<div class="info">Tasten auch per Tastatur (← → Eingabe) oder Skript:
+  <code>curl -X POST 'http://localhost:PORT/key?k=SEL&amp;ms=200'</code>, Anzeige als Text: <code>/text</code></div>
+<script>
+const COLS = 20, ROWS = 4, DOT = 4, GAP = 1, CW = 5, CH = 8, CGAP = 3;
+const cv = document.getElementById('lcd');
+const W = COLS * (CW * (DOT + GAP) + CGAP), H = ROWS * (CH * (DOT + GAP) + CGAP);
+cv.width = W; cv.height = H;
+const ctx = cv.getContext('2d');
+// Zeichen 0x20-0x7F als 5x8-Raster: aus einer Monospace-Schrift abgetastet
+const glyphs = {};
+function glyph(code) {
+  if (glyphs[code]) return glyphs[code];
+  const c = document.createElement('canvas'); c.width = 10; c.height = 16;
+  const g = c.getContext('2d', {willReadFrequently:true});
+  g.fillStyle = '#000'; g.fillRect(0, 0, 10, 16);
+  g.fillStyle = '#fff'; g.font = '14px monospace'; g.textBaseline = 'top';
+  let ch = String.fromCharCode(code);
+  if (code === 0x7e) ch = '→'; else if (code === 0x7f) ch = '←';
+  else if (code === 0x5c) ch = '¥';   // HD44780 A00: Yen statt Backslash
+  else if (code > 0x7f) ch = '░';
+  g.fillText(ch, 1, 1);
+  const d = g.getImageData(0, 0, 10, 16).data, rows = [];
+  for (let y = 0; y < CH; y++) {
+    let bits = 0;
+    for (let x = 0; x < CW; x++) {
+      let s = 0;
+      for (let yy = 0; yy < 2; yy++) for (let xx = 0; xx < 2; xx++) s += d[((y * 2 + yy) * 10 + x * 2 + xx) * 4];
+      if (s > 300) bits |= 0x10 >> x;
+    }
+    rows.push(bits);
+  }
+  return glyphs[code] = rows;
+}
+let blink = true;
+setInterval(() => { blink = !blink; if (last) draw(last); }, 400);
+let last = null;
+function draw(st) {
+  last = st;
+  const bright = st.brightness / 255;
+  const bg = `rgb(${Math.round(40 + 60 * bright)},${Math.round(70 + 120 * bright)},${Math.round(200 * bright + 30)})`;
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const code = st.lines[r][c];
+    const rows = code < 8 ? st.cgram.slice(code * 8, code * 8 + 8) : glyph(code);
+    const ox = c * (CW * (DOT + GAP) + CGAP) + 1, oy = r * (CH * (DOT + GAP) + CGAP) + 1;
+    const cur = st.cursor && st.cursor[0] === r && st.cursor[1] === c && blink;
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+      const on = st.on && (cur ? true : (rows[y] & (0x10 >> x)));
+      ctx.fillStyle = on ? '#f4f8ff' : 'rgba(255,255,255,0.07)';
+      ctx.fillRect(ox + x * (DOT + GAP), oy + y * (DOT + GAP), DOT, DOT);
+    }
+  }
+  for (const [k, m] of [['SEL', 1], ['NEXT', 2], ['PREV', 4]])
+    document.getElementById(k).classList.toggle('on', (st.keys & m) !== 0);
+  document.getElementById('info').textContent =
+    `simuliert ${(st.ms / 1000).toFixed(1)} s · Helligkeit ${st.brightness} · Kontrast ${st.contrast} · IEEE-Bus ${st.io_iec ? 'frei' : 'gesperrt (IO_IEC = 0)'}`;
+}
+async function poll() {
+  try { draw(await (await fetch('/state')).json()); } catch (e) {}
+  setTimeout(poll, 100);
+}
+function key(k, down) { fetch(`/key?k=${k}&down=${down ? 1 : 0}`, {method:'POST'}); }
+for (const k of ['PREV', 'NEXT', 'SEL']) {
+  const b = document.getElementById(k);
+  b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); key(k, true); });
+  b.addEventListener('pointerup', () => key(k, false));
+}
+const kmap = {ArrowLeft:'PREV', ArrowRight:'NEXT', Enter:'SEL'};
+document.addEventListener('keydown', e => { if (kmap[e.key] && !e.repeat) key(kmap[e.key], true); });
+document.addEventListener('keyup', e => { if (kmap[e.key]) key(kmap[e.key], false); });
+document.querySelector('.info:last-child code').textContent =
+  `curl -X POST 'http://localhost:${location.port}/key?k=SEL&ms=200'`;
+poll();
+</script>
+</body>
+</html>

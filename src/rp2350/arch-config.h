@@ -79,6 +79,21 @@ typedef unsigned int rawbutton_t;
 #ifndef PSD2_LED
 #define PSD2_LED      25
 #endif
+/* busy und dirty: Vorgabe eine gemeinsame LED */
+#ifndef PSD2_LED_BUSY
+#define PSD2_LED_BUSY  PSD2_LED
+#endif
+#ifndef PSD2_LED_DIRTY
+#define PSD2_LED_DIRTY PSD2_LED
+#endif
+/* Kartenschalter (low = Karte steckt) und Schreibschutz (high = geschuetzt);
+   -1 = nicht vorhanden */
+#ifndef PSD2_SD_CD
+#define PSD2_SD_CD    (-1)
+#endif
+#ifndef PSD2_SD_WP
+#define PSD2_SD_WP    (-1)
+#endif
 /* microSD an SPI1 */
 #ifndef PSD2_SD_CS
 #define PSD2_SD_CS    9
@@ -104,8 +119,11 @@ typedef unsigned int rawbutton_t;
 #  error "PSD2_D_BASE: D1-D8 muessen zusammenhaengend in GPIO 0-31 liegen"
 #endif
 #if PSD2_TE > 31 || PSD2_ATN > 31 || PSD2_IFC > 31 || PSD2_REN > 31 || \
-    PSD2_EOI > 31 || PSD2_DAV > 31 || PSD2_LED > 31
-#  error "TE, ATN, IFC, REN, EOI, DAV und LED muessen in GPIO 0-31 liegen"
+    PSD2_EOI > 31 || PSD2_DAV > 31 || PSD2_LED_BUSY > 31 || PSD2_LED_DIRTY > 31
+#  error "TE, ATN, IFC, REN, EOI, DAV und LEDs muessen in GPIO 0-31 liegen"
+#endif
+#if PSD2_SD_CD > 31 || PSD2_SD_WP > 31
+#  error "PSD2_SD_CD und PSD2_SD_WP muessen in GPIO 0-31 liegen"
 #endif
 #if PSD2_NRFD < 32 || PSD2_NRFD > 39 || PSD2_NDAC < 32 || PSD2_NDAC > 39
 #  error "NRFD und NDAC muessen in GPIO 32-39 liegen (oberes SIO-Register, unter den ADC-Pins)"
@@ -140,42 +158,136 @@ void psd2_board_init(void);
 
 static inline void sdcard_interface_init(void) {}
 static inline void sdcard_set_ss(int state) { (void)state; }   /* ueber spi_select_device */
-static inline uint8_t sdcard_detect(void) { return 1; }        /* kein Kartenschalter */
-static inline uint8_t sdcard_wp(void) { return 0; }
+static inline uint8_t sdcard_detect(void) {
+#if PSD2_SD_CD >= 0 && !defined(CONFIG_IGNORE_CARD_DETECT)
+  return !(psd2_in_lo() & LO(PSD2_SD_CD));
+#else
+  return 1;                                                   /* kein Kartenschalter */
+#endif
+}
+static inline uint8_t sdcard_wp(void) {
+#if PSD2_SD_WP >= 0
+  return (psd2_in_lo() & LO(PSD2_SD_WP)) != 0;
+#else
+  return 0;
+#endif
+}
 
-/* ----- Geraeteadresse, Tasten ----- */
-
-static inline void device_hw_address_init(void) {}
-static inline uint8_t device_hw_address(void) { return CONFIG_DEFAULT_ADDR; }
-
-static inline void buttons_init(void) {}
-static inline rawbutton_t buttons_read(void) { return 0; }
-
-/* ----- LEDs: eine LED (GPIO 25) fuer busy und dirty ----- */
+/* ----- LEDs: busy und dirty (Vorgabe: eine gemeinsame LED) ----- */
 
 static inline void leds_init(void) {
-  sio_hw->gpio_clr = LO(PSD2_LED);
-  sio_hw->gpio_oe_set = LO(PSD2_LED);
+  sio_hw->gpio_clr = LO(PSD2_LED_BUSY) | LO(PSD2_LED_DIRTY);
+  sio_hw->gpio_oe_set = LO(PSD2_LED_BUSY) | LO(PSD2_LED_DIRTY);
 }
 
 static inline __attribute__((always_inline)) void set_busy_led(uint8_t state) {
-  if (state) sio_hw->gpio_set = LO(PSD2_LED);
-  else       sio_hw->gpio_clr = LO(PSD2_LED);
+  if (state) sio_hw->gpio_set = LO(PSD2_LED_BUSY);
+  else       sio_hw->gpio_clr = LO(PSD2_LED_BUSY);
 }
 
 static inline __attribute__((always_inline)) void set_dirty_led(uint8_t state) {
-  if (state) sio_hw->gpio_set = LO(PSD2_LED);
-  else       sio_hw->gpio_clr = LO(PSD2_LED);
+  if (state) sio_hw->gpio_set = LO(PSD2_LED_DIRTY);
+  else       sio_hw->gpio_clr = LO(PSD2_LED_DIRTY);
 }
 
 static inline void toggle_dirty_led(void) {
-  sio_hw->gpio_togl = LO(PSD2_LED);
+  sio_hw->gpio_togl = LO(PSD2_LED_DIRTY);
 }
 
+/* ----- Bedienung wie beim petSD+ (LCD, Tasten, ATtiny25, Uhr) -----
+   Jede Funktion ist einzeln abschaltbar: CONFIG_ONBOARD_DISPLAY (LCD, Menue,
+   Tasten), CONFIG_RTC_DSRTC (DS3231). I2C ist da, sobald das Board Pins dafuer
+   hat; dann wird auch der ATtiny25 (Busfreigabe, LCD-PWM) angesprochen. */
+
+#ifdef PSD2_I2C_SDA
+#  define HAVE_I2C
+#  define i2c_init nde_i2c_init   /* hardware_i2c des SDK hat ein eigenes i2c_init */
+#  define PSD2_HAVE_ATTINY      /* ATtiny25 des petSD+ 2.x */
+#  include "i2c-lcd-pwm-io-config.h"
+#endif
+
+#ifdef CONFIG_ONBOARD_DISPLAY
+#  if !defined(PSD2_LCD_E) || !defined(PSD2_BUTTONS_ADC)
+#    error "CONFIG_ONBOARD_DISPLAY braucht ein Board mit LCD und Tasten (z. B. petsd2_dip40)"
+#  endif
+#  if !defined(PSD2_HAVE_ATTINY)
+#    error "CONFIG_ONBOARD_DISPLAY braucht den ATtiny25 (Helligkeit/Kontrast) und damit I2C"
+#  endif
+#  define HAVE_ANALOG_BUTTONS
+#  define LCD_LINES             4
+#  define LCD_COLS              20
+#  define LCD_ADDR_LINE1        0
+#  define LCD_ADDR_LINE2        64
+#  define LCD_ADDR_LINE3        20
+#  define LCD_ADDR_LINE4        84
+#  define HAVE_EARLY_LCD_INIT
+#  define HAVE_LATE_BOARD_INIT
+#endif
+#if defined(CONFIG_RTC_DSRTC) && !defined(HAVE_I2C)
+#  error "CONFIG_RTC_DSRTC braucht ein Board mit I2C"
+#endif
+
 #define HAVE_EARLY_BOARD_INIT
+
+#ifdef CONFIG_ONBOARD_DISPLAY
+#include "analog-buttons.h"
+#include "eeprom-conf.h"
+#include "menu.h"
+#include "timer.h"
+#include "lcd.h"
+#include "diagnose.h"
+#include <stdio.h>
+
+static inline void buttons_init(void) { analog_buttons_init(); }
+
+static inline void device_hw_address_init(void) {}
+
+/* wie beim petSD+: ohne Menue waehlen SEL/NEXT die Adresse 8-11 */
+static inline uint8_t device_hw_address(void) {
+  uint8_t addr;
+  if (menu_system_enabled) {
+    addr = CONFIG_DEFAULT_ADDR;
+  } else {
+    delay_ms(500);
+    addr = 8;
+    if (get_key_state(KEY_SEL))  addr += 1;
+    if (get_key_state(KEY_NEXT)) addr += 2;
+#ifdef CONFIG_UART_DEBUG
+    printf("dhw:%d\r\n", addr);
+#endif
+  }
+  return addr;
+}
+
+static inline void early_board_init(void) {
+  psd2_board_init();
+  timer_init();                 /* delay_us fuer das LCD (main ruft es spaeter erneut) */
+  /* Startbild, bevor eine Initialisierung haengen kann (wie petSD+) */
+  lcd_init();
+  lcd_bootscreen();
+}
+
+static inline void late_board_init(void) {
+  if (!menu_system_enabled) return;
+  uint8_t buttons = analog_buttons_boot_keys();
+  (void)get_key_press(KEY_ANY);
+  (void)get_key_rpt(KEY_ANY);
+  if (buttons == KEY_PREV) {
+    board_diagnose();
+  } else if (buttons == KEY_NEXT) {
+    lcd_set_brightness(0xFF);
+    menu_adjust_contrast();
+  }
+}
+#else
+static inline void buttons_init(void) {}
+static inline rawbutton_t buttons_read(void) { return 0; }
+static inline void device_hw_address_init(void) {}
+static inline uint8_t device_hw_address(void) { return CONFIG_DEFAULT_ADDR; }
 static inline void early_board_init(void) {
   psd2_board_init();
 }
+#endif
 
 /* ----- IEEE-488 ----- */
 
@@ -185,7 +297,15 @@ extern volatile bool ieee488_TE75160;
 extern volatile bool ieee488_TE75161;
 extern volatile bool ieee488_ATN_received;
 
+#ifdef PSD2_HAVE_ATTINY
+#include "i2c.h"
+/* Der ATtiny25 schaltet die 7516x erst frei, wenn IO_IEC gesetzt ist */
+static inline void ieee_interface_init(void) {
+  i2c_write_register(I2C_SLAVE_ADDRESS, IO_IEC, 1);
+}
+#else
 static inline void ieee_interface_init(void) {}
+#endif
 
 static inline uint8_t ieee488_ATN(void)  { return (psd2_in_lo() & LO(PSD2_ATN))  != 0; }
 static inline uint8_t ieee488_IFC(void)  { return (psd2_in_lo() & LO(PSD2_IFC))  != 0; }

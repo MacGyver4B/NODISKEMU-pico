@@ -14,7 +14,7 @@ timeout 2400 $VICE/src/xdrive -default -directory $VICE/data +sound $XDOPT -iecs
     -8 d_$N.img -warp -limitcycles $((C + 3000000)) > d_$N.log 2>&1 &
 X=$!
 sleep 0.5
-timeout 2400 $VICE/src/xpet -default -directory $VICE/data +sound -model 4032 -drive8type 0 +busdevice8 \
+timeout 2400 $VICE/src/xpet -default -directory $VICE/data +sound -model 4032 $XARGS -drive8type 0 +busdevice8 \
     -ieeesimlink ${N}i -warp -limitcycles $C -exitscreenshot s_$N.png -keybuf "$K" > x_$N.log 2>&1
 wait $X
 sleep 0.5

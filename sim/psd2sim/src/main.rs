@@ -12,11 +12,43 @@
 //!     43-47 CLK/DATA/ATN/SRQ/RESET ueber 74LS07 (Pin low = Leitung low)
 //! Ein Controller-Ausgang zieht die Leitung, wenn der Pin getrieben und low
 //! ist; ein offener Pin gilt am TTL-Eingang des Treibers als high.
+//!
+//! -b dip40: Belegung des petSD2 im DIP40-Sockel des petSD+ (Board
+//!   petsd2_dip40): kein REN/SRQ am IEEE-Bus, IEC ein 43-46, aus 38-42,
+//!   Kartenschalter/Schreibschutz an GPIO 2/3, dazu das Bedienfeld (LCD,
+//!   Tasten, ATtiny25, DS3231, panel.rs) mit Webseite auf -w Port (8488).
+//!   -k PREV|NEXT|SEL haelt Tasten ab dem Start (z. B. PREV = Diagnose).
+//!
+//! Fehlersuche: PSD2_SOLO=ms (ohne Bus), PSD2_PEEK=adr,... (Speicherworte am
+//! Ende von PSD2_SOLO), PSD2_MMIO=1 (MMIO-Spur von picoem auf stdout),
+//! PSD2_LCDDUMP=1 (jede Aenderung der Anzeige).
 
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::Ordering;
 
 use rp2350_emu::{Config, Emulator, EmulatorBuilder, Package};
+
+mod panel;
+
+/// Pinbelegung des Boards
+struct Pins {
+    ren: Option<u32>,
+    srq: Option<u32>,
+    iec_in: [u32; 4],     // CLK, DATA, ATN, SRQ (74LVC14A)
+    iec_out: [u32; 5],    // CLK, DATA, ATN, SRQ, RESET
+    sd_cd_wp: Option<(u32, u32)>,
+}
+
+impl Pins {
+    fn xxl() -> Self {
+        Pins { ren: Some(29), srq: Some(34), iec_in: [39, 40, 41, 42],
+               iec_out: [43, 44, 45, 46, 47], sd_cd_wp: None }
+    }
+    fn dip40() -> Self {
+        Pins { ren: None, srq: None, iec_in: [43, 44, 45, 46],
+               iec_out: [38, 39, 40, 41, 42], sd_cd_wp: Some((2, 3)) }
+    }
+}
 
 #[repr(C)]
 struct SimlinkT {
@@ -164,6 +196,9 @@ struct Bus {
 struct Bridge {
     verbose: u32,
     bus: Vec<Bus>,
+    pins: Pins,
+    panel: Option<panel::PanelLink>,
+    next_tick: f64,
 }
 
 impl Bridge {
@@ -179,9 +214,18 @@ impl Bridge {
                     val |= 1 << pin;
                 }
             };
+            if let Some((cd, wp)) = self.pins.sd_cd_wp {
+                put(cd, false);       // Karte steckt
+                put(wp, false);       // nicht schreibgeschuetzt
+            }
+            // ATtiny25 IO_IEC = 0 sperrt den IEEE-Bus (petSD+ 2.x)
+            let ieee_on = self.panel.as_ref().map(|p| p.io_iec()).unwrap_or(true);
             for b in &self.bus {
-                let l = b.ext_pull | b.pub_pull;
-                let d = b.ext_data | b.pub_data;
+                let (mut l, mut d) = (b.ext_pull | b.pub_pull, b.ext_data | b.pub_data);
+                if !b.iec && !ieee_on {
+                    l = 0;
+                    d = 0;
+                }
                 if !b.iec {
                     // SN75160/75161, DC = high (Geraet), TE = GPIO 26:
                     // ATN, IFC, REN immer empfangen; TE low: EOI, DAV, Daten
@@ -191,7 +235,9 @@ impl Bridge {
                     let atn_low = l & ATN != 0;
                     put(27, l & ATN == 0);
                     put(28, l & IFC == 0);
-                    put(29, l & REN == 0);
+                    if let Some(ren) = self.pins.ren {
+                        put(ren, l & REN == 0);
+                    }
                     if !te || atn_low {
                         put(30, l & EOI == 0);
                     }
@@ -206,10 +252,11 @@ impl Bridge {
                     }
                 } else {
                     // 74LVC14A invertiert: Pin high = Leitung low
-                    put(39, l & IEC_CLK != 0);
-                    put(40, l & IEC_DATA != 0);
-                    put(41, l & IEC_ATN != 0);
-                    put(42, l & IEC_SRQ != 0);
+                    let i = self.pins.iec_in;
+                    put(i[0], l & IEC_CLK != 0);
+                    put(i[1], l & IEC_DATA != 0);
+                    put(i[2], l & IEC_ATN != 0);
+                    put(i[3], l & IEC_SRQ != 0);
                 }
             }
         }
@@ -221,10 +268,24 @@ impl Bridge {
         }
     }
 
+    /// Bedienfeld nach einem Emulatorschritt bedienen (LCD-Strobe, Tasten)
+    fn panel_step(&mut self, emu: &mut Emulator) {
+        if let Some(p) = self.panel.as_mut() {
+            let (out, oe) = pins_out(emu);
+            p.poll(out, oe);
+            let ms = emu.cycles() as f64 / emu.bus.sys_clk_hz().max(1) as f64 * 1000.0;
+            if ms >= self.next_tick {
+                self.next_tick = ms + 1.0;
+                p.tick(emu, ms);
+            }
+        }
+    }
+
     /// Ausgangspins auf die Busse; true, wenn sich etwas geaendert hat
     fn publish(&mut self, emu: &mut Emulator, t: u64) -> bool {
         let (out, oe) = pins_out(emu);
         let mut changed = false;
+        let ieee_on = self.panel.as_ref().map(|p| p.io_iec()).unwrap_or(true);
         for b in self.bus.iter_mut() {
             let mut p = 0u8;
             let mut d = 0u8;
@@ -245,14 +306,21 @@ impl Bridge {
                     if pulled(out, oe, 32) { p |= NRFD; }
                     if pulled(out, oe, 33) { p |= NDAC; }
                 }
-                if pulled(out, oe, 34) { p |= SRQ; }
+                if let Some(srq) = self.pins.srq {
+                    if pulled(out, oe, srq) { p |= SRQ; }
+                }
+                if !ieee_on {
+                    p = 0;
+                    d = 0;
+                }
             } else {
-                // 74LS07: Pin low = Leitung low
-                if pulled(out, oe, 43) { p |= IEC_CLK; }
-                if pulled(out, oe, 44) { p |= IEC_DATA; }
-                if pulled(out, oe, 45) { p |= IEC_ATN; }
-                if pulled(out, oe, 46) { p |= IEC_SRQ; }
-                if pulled(out, oe, 47) { p |= IEC_RESET; }
+                // 74LS07/74LVC07A: Pin low = Leitung low
+                let o = self.pins.iec_out;
+                if pulled(out, oe, o[0]) { p |= IEC_CLK; }
+                if pulled(out, oe, o[1]) { p |= IEC_DATA; }
+                if pulled(out, oe, o[2]) { p |= IEC_ATN; }
+                if pulled(out, oe, o[3]) { p |= IEC_SRQ; }
+                if pulled(out, oe, o[4]) { p |= IEC_RESET; }
             }
             if !b.pub_valid || p != b.pub_pull || d != b.pub_data {
                 b.pub_valid = true;
@@ -276,6 +344,9 @@ fn main() {
     let mut verbose = 0u32;
     let mut look: u64 = 2_000_000;
     let mut sdimg: Option<String> = None;
+    let mut board = std::env::var("PSD2_BOARD").unwrap_or_default();
+    let mut http: Option<u16> = None;
+    let mut hold = String::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -286,6 +357,18 @@ fn main() {
                 sdimg = Some(args[i + 1].clone());
                 args.drain(i..i + 2);
             }
+            "-b" => {
+                board = args[i + 1].clone();
+                args.drain(i..i + 2);
+            }
+            "-w" => {
+                http = Some(args[i + 1].parse().expect("-w Port"));
+                args.drain(i..i + 2);
+            }
+            "-k" => {
+                hold = args[i + 1].clone();
+                args.drain(i..i + 2);
+            }
             "-l" => {
                 look = (args[i + 1].parse::<f64>().expect("-l us") * 1e6) as u64;
                 args.drain(i..i + 2);
@@ -294,7 +377,7 @@ fn main() {
         }
     }
     if args.len() != 2 && args.len() != 3 {
-        eprintln!("usage: psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] firmware.bin ieeebus [iecbus]");
+        eprintln!("usage: psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] [-b dip40 [-w port] [-k tasten]] firmware.bin ieeebus [iecbus]");
         std::process::exit(1);
     }
     let fw = std::fs::read(&args[0]).expect("Firmware");
@@ -340,12 +423,30 @@ fn main() {
         // die Ausnahmen vor dem Sprung frei
         emu.core_mut(0).regs.faultmask = 0;
     }
+    let dip40 = board == "dip40" || board == "petsd2_dip40";
+    let mut br = Bridge {
+        verbose, bus: Vec::new(),
+        pins: if dip40 { Pins::dip40() } else { Pins::xxl() },
+        panel: None, next_tick: 0.0,
+    };
+    if dip40 {
+        let p = panel::new_panel();
+        if !hold.is_empty() {
+            panel::hold_keys(&p, &hold);
+        }
+        panel::serve(p.clone(), http.unwrap_or(8488));
+        br.panel = Some(panel::PanelLink::attach(&mut emu, p, verbose));
+    }
+    if std::env::var("PSD2_MMIO").is_ok() {
+        emu.bus.mmio_trace_enabled = true;      // MMIO-Zugriffe auf stdout
+    }
     if let Ok(ms) = std::env::var("PSD2_SOLO") {
         // ohne Bus: alle Eingaenge frei, nur Firmware und Postfach
         let ms: f64 = ms.parse().unwrap_or(1000.0);
         let mask: u64 = (0xff << 16) | (0x7f << 27);
+        let cdwp: u64 = br.pins.sd_cd_wp.map(|(c, w)| (1u64 << c) | (1u64 << w)).unwrap_or(0);
         emu.bus.gpio_external_in.store(mask as u32, Ordering::Relaxed);
-        emu.bus.gpio_external_mask = mask as u32;
+        emu.bus.gpio_external_mask = (mask | cdwp) as u32;
         emu.bus.set_gpio_external_in_hi((mask >> 32) as u32, (mask >> 32) as u32);
         let wall = std::time::Instant::now();
         let hz = emu.bus.sys_clk_hz().max(1) as f64;
@@ -355,6 +456,7 @@ fn main() {
         while (emu.cycles() as f64) / hz * 1000.0 < ms {
             emu.run(64).expect("run");
             mbox(&mut emu, &mut uline);
+            br.panel_step(&mut emu);
             let now = (emu.cycles() as f64) / hz * 1000.0;
             if atn_at >= 0.0 && !atn_done && now >= atn_at {
                 let v = mask & !(1u64 << 27);
@@ -379,6 +481,14 @@ fn main() {
             eprintln!("psd2sim: SP {:08x} gestapelt LR {:08x} PC {:08x} xPSR {:08x}", sp,
                 emu.peek(sp + 20), emu.peek(sp + 24), emu.peek(sp + 28));
         }
+        if let Ok(list) = std::env::var("PSD2_PEEK") {
+            // PSD2_PEEK=20057c94,... : Speicherworte am Ende ausgeben
+            for a in list.split(',') {
+                if let Ok(a) = u32::from_str_radix(a.trim_start_matches("0x"), 16) {
+                    eprintln!("psd2sim: [{:08x}] = {:08x}", a, emu.peek(a & !3));
+                }
+            }
+        }
         eprintln!("psd2sim: {} ms simuliert in {:.1} s, PC {:08x}", ms,
                   wall.elapsed().as_secs_f64(), emu.core(0).regs.pc());
         return;
@@ -397,7 +507,6 @@ fn main() {
         return;
     }
 
-    let mut br = Bridge { verbose, bus: Vec::new() };
     for (k, name) in args[1..].iter().enumerate() {
         let iec = k == 1;
         let kind = if iec { SIMLINK_BUS_IEC } else { SIMLINK_BUS_IEEE };
@@ -521,6 +630,7 @@ fn main() {
             let n = if emu.core(0).regs.primask != 0 { step as u64 } else { coarse };
             emu.run(n).expect("run");
             mbox(&mut emu, &mut uline);
+            br.panel_step(&mut emu);
             let c = emu.cycles();
             let hz = emu.bus.sys_clk_hz().max(1) as u64;
             t += (c - last_cyc) * 1_000_000_000_000 / hz;

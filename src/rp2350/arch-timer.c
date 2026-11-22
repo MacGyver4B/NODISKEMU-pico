@@ -9,6 +9,9 @@
 #include "led.h"
 #include "timer.h"
 #include "iec-host.h"
+#ifdef HAVE_ANALOG_BUTTONS
+#include "analog-buttons.h"
+#endif
 
 static uint64_t timeout_end;
 
@@ -26,12 +29,43 @@ uint64_t __not_in_flash_func(iec_now)(void) {
   return r;
 }
 
+#ifdef HAVE_ANALOG_BUTTONS
+/* Entprellen wie timerint.S (vier Abtastungen per vertikalem Zaehler),
+   Wiederholung fuer PREV und NEXT nach 500 ms, dann alle 150 ms */
+#define REPEAT_MASK     (KEY_PREV | KEY_NEXT)
+#define REPEAT_START    50
+#define REPEAT_NEXT     15
+
+extern volatile uint8_t key_state, key_press, key_rpt;
+extern volatile uint8_t key_ct0, key_ct1, key_ct2, key_repeat_counter;
+
+static void debounce_keys(uint8_t sample) {
+  uint8_t delta = key_state ^ sample;
+  key_ct2 = (key_ct2 ^ (key_ct1 & key_ct0)) & delta;
+  key_ct1 = (key_ct1 ^ key_ct0) & delta;
+  key_ct0 = ~key_ct0 & delta;
+  uint8_t toggle = delta ^ (key_ct0 | key_ct1 | key_ct2);
+  uint8_t state = key_state ^ toggle;
+  key_state = state;
+  key_press |= state & toggle;
+  if (!(state & REPEAT_MASK))
+    key_repeat_counter = REPEAT_START;
+  if (--key_repeat_counter == 0) {
+    key_repeat_counter = REPEAT_NEXT;
+    key_rpt |= state & REPEAT_MASK;
+  }
+}
+#endif
+
 void isr_systick(void) {
   (void)iec_now();             /* Ueberlauf des Zykluszaehlers mitzaehlen */
   ticks++;
   /* Fehler-LED blinken lassen (wie timerint.S) */
   if ((led_state & LED_ERROR) && (ticks & 15) == 0)
     toggle_dirty_led();
+#ifdef HAVE_ANALOG_BUTTONS
+  debounce_keys(analog_buttons_poll());
+#endif
 }
 
 /* Zeitbasis ist der DWT-Zykluszaehler (sys_clk): der SDK-Zeitgeber

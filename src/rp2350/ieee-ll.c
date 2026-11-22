@@ -12,14 +12,17 @@ static uint atn_sm;
 static bool atn_ready;
 
 void psd2_board_init(void) {
-  /* Daten und Eingaenge vom 75161 */
+  /* Daten und Eingaenge vom 75161 (REN ist optional) */
+  static const int8_t ins[] = { PSD2_ATN, PSD2_IFC, PSD2_REN, PSD2_EOI, PSD2_DAV,
+                                PSD2_NRFD, PSD2_NDAC };
   for (uint p = PSD2_D_BASE; p < PSD2_D_BASE + 8; p++) {
     gpio_init(p);
     gpio_pull_up(p);
   }
-  for (uint p = PSD2_ATN; p <= PSD2_NDAC; p++) {
-    gpio_init(p);
-    gpio_pull_up(p);
+  for (uint i = 0; i < sizeof(ins); i++) {
+    if (ins[i] < 0) continue;
+    gpio_init(ins[i]);
+    gpio_pull_up(ins[i]);
   }
   /* Grundzustand Hoeren: NRFD, NDAC frei und als Ausgang, TE low */
   gpio_put(PSD2_NRFD, 1);
@@ -29,10 +32,21 @@ void psd2_board_init(void) {
   gpio_set_dir(PSD2_TE, GPIO_OUT);
   gpio_set_dir(PSD2_NRFD, GPIO_OUT);
   gpio_set_dir(PSD2_NDAC, GPIO_OUT);
+#if PSD2_SRQ >= 0
   gpio_init(PSD2_SRQ);
   gpio_put(PSD2_SRQ, 1);
   gpio_set_dir(PSD2_SRQ, GPIO_OUT);
-  gpio_init(PSD2_LED);
+#endif
+  gpio_init(PSD2_LED_BUSY);
+  gpio_init(PSD2_LED_DIRTY);
+#if PSD2_SD_CD >= 0
+  gpio_init(PSD2_SD_CD);
+  gpio_pull_up(PSD2_SD_CD);
+#endif
+#if PSD2_SD_WP >= 0
+  gpio_init(PSD2_SD_WP);
+  gpio_pull_up(PSD2_SD_WP);
+#endif
 }
 
 static void __not_in_flash_func(atn_isr)(void) {

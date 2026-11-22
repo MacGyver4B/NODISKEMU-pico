@@ -40,10 +40,13 @@ extern uint8_t lcd_contrast;
 extern uint8_t lcd_brightness;
 
 void lcd_init(void);
+void lcd_lines_init(void);
 void lcd_clear(void);
 void lcd_home(void);
 void lcd_locate(uint8_t x, uint8_t y);
 void lcd_send_command(uint8_t cmd);
+/* Load all eight 5x8 CGRAM characters from 64 bytes in program memory. */
+void lcd_load_custom_chars_P(const uint8_t *glyphs);
 void lcd_putc(char c);
 void lcd_puts(const char *s);
 void lcd_puts_P(const char *progmem_s);
@@ -56,10 +59,12 @@ uint8_t lcd_set_brightness(uint8_t contrast);
 #else
 
 static inline void lcd_init(void) {}
+static inline void lcd_lines_init(void) {}
 static inline void lcd_clear(void) {}
 static inline void lcd_home(void) {}
 static inline void lcd_locate(uint8_t x, uint8_t y) {}
 static inline void lcd_send_command(uint8_t cmd) {}
+static inline void lcd_load_custom_chars_P(const uint8_t *glyphs) { (void)glyphs; }
 static inline void lcd_putc(char c) {}
 static inline void lcd_puts(const char *s) {}
 static inline void lcd_puts_P(const char *progmem_s) {}
