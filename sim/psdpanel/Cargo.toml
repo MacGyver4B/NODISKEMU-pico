@@ -1,0 +1,12 @@
+[package]
+name = "psdpanel"
+version = "0.1.0"
+edition = "2021"
+description = "Bedienfeld des petSD+ (LCD 20x4, Tasten, ATtiny25, DS3231) fuer psd2sim und petsdsim"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[profile.release]
+opt-level = 3
+debug = false

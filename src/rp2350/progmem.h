@@ -38,5 +38,6 @@
 #define memcmp_P(s1,s2,n)    memcmp(s1,s2,n)
 #define strcpy_P(dest,src)   strcpy(dest,src)
 #define strcmp_P(s1,s2)      strcmp(s1,s2)
+#define strlen_P(s)          strlen(s)
 
 #endif

@@ -74,10 +74,18 @@ pico_generate_pio_header(petsd2 ${NDE}/rp2350/ar6put.pio)
 target_compile_options(petsd2 PRIVATE
   "SHELL:-iquote ${GEN}" "SHELL:-iquote ${NDE}" "SHELL:-iquote ${NDE}/rp2350"
   "SHELL:-iquote ${TOP}/lcd-i2c-pwm-io")
+# Version wie beim AVR aus scripts/Makefile.main (MAJOR.MINOR.PATCHLEVEL)
+file(STRINGS ${TOP}/scripts/Makefile.main _mk REGEX "^(MAJOR|MINOR|PATCHLEVEL) = ")
+foreach(_l ${_mk})
+  string(REGEX MATCH "^([A-Z]+) = ([0-9]+)" _m "${_l}")
+  set(NDE_${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+endforeach()
+set(NDE_VERSION "${NDE_MAJOR}.${NDE_MINOR}.${NDE_PATCHLEVEL}")
+message(STATUS "NODISKEMU ${NDE_VERSION}")
 target_compile_definitions(petsd2 PRIVATE
-  VERSION="0.0-petSD2"
+  VERSION="${NDE_VERSION}"
   HWNAME="${PSD2_HWNAME}"
-  LONGVERSION=""
+  LONGVERSION="-${PSD2_HWNAME}"
   PICO_USE_GPIO_COPROCESSOR=0
 )
 target_compile_options(petsd2 PRIVATE -Wall -Wno-unused-function $<$<COMPILE_LANGUAGE:C>:-Wno-pointer-sign> -Wno-char-subscripts)

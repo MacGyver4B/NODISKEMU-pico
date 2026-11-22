@@ -17,6 +17,7 @@ Dateien; in `src/ieee.c` sind die Änderungen per `HAVE_ARCH_IEEE_LL` bzw.
 | `src/iecrelay.c/.h` | Relais IEEE → IEC: Namen/Befehle/Daten weiterreichen, Kanal vorab holen, AR6-Schnelllader (LOAD 1541/1571/1581, SAVE 1541/1571 einseitig) |
 | `configs/config-petSD2` | NODISKEMU-Konfiguration |
 | `pico/` | CMake-Build mit dem pico-sdk, Board-Dateien in `pico/boards/` |
+| `sim/psdpanel/` | Bedienfeld des petSD+ (LCD 20×4, Tasten, ATtiny25, DS3231, Webseite) als eigene Bibliothek, genutzt von psd2sim (Rust) und von petsdsim (C, AVR-Original in simavr); `tools/lcdcmp.py` vergleicht die Anzeigen zweier Läufe |
 | `sim/psd2sim/` | Brücke: Firmware in picoem ([Fork mit Korrekturen](https://github.com/MacGyver4B/picoem/tree/rp2350b-fixes), Zweig `rp2350b-fixes`) an VICE (simlink, IEEE + IEC), Modell der SN75160/75161, SD-Kartenmodell, Testskripte |
 
 ## Belegung (GPIO)
@@ -131,6 +132,19 @@ AR6CRT=/pfad/ar6.crt ./test/mkwork.sh          # Testdaten nach $WORK (/tmp/psd)
 ./test/run-relay-tests.sh                       # Relais: std1541 ar1541 ar1571 ar1581 absent
 ./test/run-relay-tests.sh ss1571 ds1571 std1581 # weitere Fälle
 ```
+
+**Vergleich mit dem Original (petSD+, AVR):** `petsdsim` aus VICE-LRE-SIMLINK
+(`src/simlink/test/petsdsim.c`, mit `-DPSDPANEL` gegen `sim/psdpanel/target/release/libpsdpanel.a`
+gebaut) hängt dasselbe Bedienfeld an die unveränderte NODISKEMU-Firmware des
+petSD+ (LCD an PB0–3/PD3/PD4, I²C per softi2c an PC0/PC1, Tasten an ADC7). Beide
+laufen auch ohne Bus (`petsdsim -p -t ms fw.elf sd.img -`, `PSD2_SOLO=ms psd2sim -b dip40 …`).
+Gleiche Tastenfolge in simulierter Zeit mit `PSD_KEYS="7000:SEL:300,8500:NEXT:200"`
+(der AVR braucht bis zum Statusbild etwa 7 s länger, also dort entsprechend später),
+Uhr reproduzierbar mit `PSD_RTC_START=<Unix-Sekunden>`, Protokoll mit `PSD2_LCDDUMP=1`,
+dann `sim/psdpanel/tools/lcdcmp.py avr.log pico.log` – verglichen werden nur
+Bildschirme, die mindestens 100 ms stehen. Stand 22.11.: Startbild, Menü, Uhr
+stellen, Dateien blättern und Kontrast gleich; einziger Unterschied die
+Vorgabeadresse (AVR mit frischem EEPROM 11, petSD2 8).
 
 **petSD2 mit Bedienfeld** (Firmware aus `cmake -DPSD2_EMU=1 -DPICO_BOARD=petsd2_dip40`):
 `psd2sim -b dip40` bildet LCD, Tasten, ATtiny25 und DS3231 nach und zeigt beides

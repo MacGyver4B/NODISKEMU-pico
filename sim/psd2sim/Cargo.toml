@@ -5,6 +5,7 @@ edition = "2021"
 description = "Bruecke: NODISKEMU-pico in picoem an VICE (simlink, IEEE-488 + IEC)"
 
 [dependencies]
+psdpanel = { path = "../psdpanel" }
 # picoem mit den psd2-Korrekturen (CPS-Bits, SIO GPIO_HI_OUT/OE)
 rp2350-emu = { git = "https://github.com/MacGyver4B/picoem", branch = "rp2350b-fixes" }
 

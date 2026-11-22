@@ -114,8 +114,13 @@ name = "psd2sim"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "psdpanel",
  "rp2350-emu",
 ]
+
+[[package]]
+name = "psdpanel"
+version = "0.1.0"
 
 [[package]]
 name = "quote"

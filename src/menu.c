@@ -101,7 +101,7 @@ static entry_t *browser_entry(uint16_t index) {
   return (entry_t *)(block->data + index * sizeof(entry_t));
 }
 
-#if CONFIG_HARDWARE_VARIANT == HW_PETSDPLUS && LCD_COLS >= 8 && LCD_LINES >= 4
+#if (CONFIG_HARDWARE_VARIANT == HW_PETSDPLUS || defined(PSD2_BOARD_DIP40)) && LCD_COLS >= 8 && LCD_LINES >= 4
 /* "SD", 20x16 pixels in a 4x2 arrangement: slots 0..3 above 4..7.
  * "pet" on the baseline and the superscript plus use normal ROM glyphs.
  */
@@ -173,7 +173,7 @@ void lcd_draw_screen(uint16_t screen) {
 
   switch (screen) {
   case SCRN_SPLASH:
-#if CONFIG_HARDWARE_VARIANT == HW_PETSDPLUS && LCD_COLS >= 8 && LCD_LINES >= 4
+#if (CONFIG_HARDWARE_VARIANT == HW_PETSDPLUS || defined(PSD2_BOARD_DIP40)) && LCD_COLS >= 8 && LCD_LINES >= 4
     lcd_load_custom_chars_P(&petsd_logo[0][0]);
     lcd_locate((LCD_COLS - 8) / 2 + 3, 0);
     for (uint8_t i = 0; i < 4; i++) lcd_putc(i);
