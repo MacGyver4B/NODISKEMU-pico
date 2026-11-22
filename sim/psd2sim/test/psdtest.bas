@@ -34,6 +34,17 @@
 620 print#15,"cd:ordner":gosub9000:t$="cd ordner":x=0:gosub9100
 630 open2,8,2,"@:drin,s,w":print#2,"x":close2:gosub9000:t$="w ordner":x=0:gosub9100
 640 print#15,"cd:"+chr$(95):gosub9000:t$="cd zurueck":x=0:gosub9100
+700 rem m-r ohne emulierten speicher liest 0 (andyg 0016)
+710 print#15,"m-r"chr$(164)chr$(67)chr$(1):get#15,a$:t$="m-r 43a4":x=0:er=asc(a$+chr$(0)):gosub9100
+720 rem sektorbefehle im image, bam-zwischenspeicher (andyg 0017)
+730 print#15,"cd:t.d64":gosub9000:t$="cd d64 sektor":x=0:gosub9100
+740 open5,8,5,"#":gosub9000:t$="puffer":x=0:gosub9100
+750 print#15,"u1:5,0,18,0":gosub9000:t$="u1 18,0":x=0:gosub9100
+760 print#15,"b-p:5,144":print#5,"q";:print#15,"u2:5,0,18,0":gosub9000:t$="u2 18,0":x=0:gosub9100
+770 open2,8,2,"@:u2test,s,w":print#2,"a":close2:gosub9000:t$="datei nach u2":x=0:gosub9100
+780 print#15,"u1:5,0,18,0":print#15,"b-p:5,144":get#5,a$:close5
+790 t$="u2 bleibt":x=0:er=-(a$<>"q"):gosub9100
+795 print#15,"cd:"+chr$(95):gosub9000:t$="cd zurueck":x=0:gosub9100
 900 open3,8,3,"@:testlog,s,w":fori=1ton:print#3,r$(i):next:close3
 910 print:print"ergebnis";n-f;"von";n;"ok":close15:end
 9000 input#15,er,er$,et,es:return
