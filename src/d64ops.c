@@ -1670,7 +1670,25 @@ static uint8_t d64_delete(path_t *path, cbmdirent_t *dent) {
   return 1;
 }
 
+/* Keep the cached BAM sectors in step with raw sector access (U1/U2,
+   B-R/B-W): a read sees changes still in the cache, a write replaces the
+   cached copy so it is not written back over the new data later. */
+static void bam_cache_sync(uint8_t part, uint8_t track, uint8_t sector, buffer_t *written) {
+  buffer_t *b[2] = { bam_buffer, bam_buffer2 };
+
+  for (uint8_t i = 0; i < 2; i++) {
+    if (b[i] == NULL || !bam_buffer_match(b[i], part, track, sector))
+      continue;
+    if (written) {
+      memcpy(b[i]->data, written->data, 256);
+      b[i]->mustflush = 0;
+    } else
+      b[i]->cleanup(b[i]);
+  }
+}
+
 static void d64_read_sector(buffer_t *buf, uint8_t part, uint8_t track, uint8_t sector) {
+  bam_cache_sync(part, track, sector, NULL);
   checked_read(part, track, sector, buf->data, 256, ERROR_ILLEGAL_TS_COMMAND);
 }
 
@@ -1678,8 +1696,10 @@ static void d64_write_sector(buffer_t *buf, uint8_t part, uint8_t track, uint8_t
   if (track < 1 || track > get_param(part, LAST_TRACK) ||
       sector >= sectors_per_track(part, track)) {
     set_error_ts(ERROR_ILLEGAL_TS_COMMAND,track,sector);
-  } else
+  } else {
     image_write(part, sector_offset(part,track,sector), buf->data, 256, 1);
+    bam_cache_sync(part, track, sector, buf);
+  }
 }
 
 static void d64_rename(path_t *path, cbmdirent_t *dent, uint8_t *newname) {

@@ -736,8 +736,16 @@ static void parse_block(void) {
       return;
     }
 
+    uint8_t part = buf->pvt.buffer.part;
+#ifdef CONFIG_DUAL_DRIVE
+    /* The second parameter is the drive: U1:2,1,39,0 reads from drive 1
+       (or from drive 0's disk while drive 1 follows drive 0) */
+    if (pcount >= 4 && params[1] < 2)
+      part = DRIVE_PART(params[1]);
+#endif
+
     if (*str == 'R') {
-      read_sector(buf, buf->pvt.buffer.part, params[2], params[3]);
+      read_sector(buf, part, params[2], params[3]);
       if (command_buffer[0] == 'B') {
         buf->position = 1;
         buf->lastused = buf->data[0];
@@ -748,7 +756,7 @@ static void parse_block(void) {
     } else {
       if (command_buffer[0] == 'B')
         buf->data[0] = buf->position-1; // FIXME: Untested, verify!
-      write_sector(buf, buf->pvt.buffer.part, params[2], params[3]);
+      write_sector(buf, part, params[2], params[3]);
     }
     break;
 
