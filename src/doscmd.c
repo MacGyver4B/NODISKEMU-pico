@@ -737,11 +737,14 @@ static void parse_block(void) {
     }
 
     uint8_t part = buf->pvt.buffer.part;
-#ifdef CONFIG_DUAL_DRIVE
+#ifdef CONFIG_MULTIDRIVE
     /* The second parameter is the drive: U1:2,1,39,0 reads from drive 1
-       (or from drive 0's disk while drive 1 follows drive 0) */
-    if (pcount >= 4 && params[1] < 2)
-      part = DRIVE_PART(params[1]);
+       (or from drive 0's disk if the device has no drive 1 in PETSD.CFG) */
+    if (md_active && pcount >= 4 && params[1] < MD_DRIVES) {
+      uint8_t slot = md_drive_slot(params[1]);
+      if (slot != MD_NO_SLOT)
+        part = slot;
+    }
 #endif
 
     if (*str == 'R') {
