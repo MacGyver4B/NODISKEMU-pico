@@ -88,6 +88,10 @@ function draw(st) {
   const bright = st.brightness / 255;
   const bg = `rgb(${Math.round(40 + 60 * bright)},${Math.round(70 + 120 * bright)},${Math.round(200 * bright + 30)})`;
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  // Kontrast (PWM an V0, Naeherung): kleiner Wert = kraeftig, ab etwa 18 kaum
+  // noch lesbar; bei 0 werden auch die dunklen Punkte sichtbar
+  const c = Math.min(st.contrast, 18) / 18;
+  const onA = (1 - 0.85 * c).toFixed(2), offA = (0.07 + 0.12 * Math.max(0, 1 - st.contrast)).toFixed(2);
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const code = st.lines[r][c];
     const rows = code < 16 ? st.cgram.slice((code & 7) * 8, (code & 7) * 8 + 8) : glyph(code);
@@ -95,14 +99,14 @@ function draw(st) {
     const cur = st.cursor && st.cursor[0] === r && st.cursor[1] === c && blink;
     for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
       const on = st.on && (cur ? true : (rows[y] & (0x10 >> x)));
-      ctx.fillStyle = on ? '#f4f8ff' : 'rgba(255,255,255,0.07)';
+      ctx.fillStyle = on ? `rgba(244,248,255,${onA})` : `rgba(255,255,255,${offA})`;
       ctx.fillRect(ox + x * (DOT + GAP), oy + y * (DOT + GAP), DOT, DOT);
     }
   }
   for (const [k, m] of [['SEL', 1], ['NEXT', 2], ['PREV', 4]])
     document.getElementById(k).classList.toggle('on', (st.keys & m) !== 0);
   document.getElementById('info').textContent =
-    `simuliert ${(st.ms / 1000).toFixed(1)} s · Helligkeit ${st.brightness} · Kontrast ${st.contrast} · IEEE-Bus ${st.io_iec ? 'frei' : 'gesperrt (IO_IEC = 0)'}`;
+    `simuliert ${(st.ms / 1000).toFixed(1)} s · Helligkeit ${st.brightness} · Kontrast ${st.contrast} (Näherung) · IEEE-Bus ${st.io_iec ? 'frei' : 'gesperrt (IO_IEC = 0)'}`;
 }
 async function poll() {
   try { draw(await (await fetch('/state')).json()); } catch (e) {}

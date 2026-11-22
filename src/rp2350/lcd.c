@@ -116,11 +116,28 @@ static void lcd_define_tilde(void) {
 }
 #endif
 
+/* Volles Kaestchen als Zeichen 1 im CGRAM: Das Menue zeichnet Balken
+   (Kontrast, Helligkeit) mit 0xFF. Das ist nur beim ROM-Code A00 ein
+   Kaestchen, beim A02 ("European standard font") ein y mit Trema. Ueber das
+   CGRAM sieht der Balken bei beiden gleich aus. Wie die Tilde wird das
+   Zeichen beim ersten Gebrauch geladen und nach dem Startlogo erneut. */
+#define LCD_CHAR_BLOCK 1
+static bool lcd_block_loaded;
+
+static void lcd_define_block(void) {
+  lcd_send_command(0x40 | (LCD_CHAR_BLOCK << 3));
+  lcd_set_data_mode();
+  for (uint8_t i = 0; i < 8; i++)
+    lcd_write(0x1f);
+  lcd_block_loaded = true;
+}
+
 void lcd_load_custom_chars_P(const uint8_t *glyphs) {
   uint8_t x = lcd_x, y = lcd_y;
 #ifdef CONFIG_MULTIDRIVE
   lcd_tilde_loaded = false;
 #endif
+  lcd_block_loaded = false;
   lcd_send_command(0x40);
   lcd_set_data_mode();
   for (uint8_t i = 0; i < 64; i++)
@@ -191,12 +208,15 @@ void lcd_putc(char c) {
   if (c == '~' && !lcd_tilde_loaded)
     lcd_define_tilde();
 #endif
+  if ((uint8_t)c == 0xFF && !lcd_block_loaded)
+    lcd_define_block();
   lcd_locate(lcd_x, lcd_y);
   if ((uint8_t)c < 8 || (uint8_t)c >= ' ') {
     lcd_set_data_mode();
 #ifdef CONFIG_MULTIDRIVE
     if (c == '~') c = LCD_CHAR_TILDE;
 #endif
+    if ((uint8_t)c == 0xFF) c = LCD_CHAR_BLOCK;
     lcd_write(c);
     lcd_x++;
   }
