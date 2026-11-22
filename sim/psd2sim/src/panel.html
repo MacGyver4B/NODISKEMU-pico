@@ -31,7 +31,7 @@
 </div>
 <div class="info" id="info"></div>
 <div class="info">Tasten auch per Tastatur (← → Eingabe) oder Skript:
-  <code>curl -X POST 'http://localhost:PORT/key?k=SEL&amp;ms=200'</code>, Anzeige als Text: <code>/text</code></div>
+  <code id="curl">curl -X POST 'http://localhost:PORT/key?k=SEL&amp;ms=200'</code>, Anzeige als Text: <code>/text</code></div>
 <script>
 const COLS = 20, ROWS = 4, DOT = 4, GAP = 1, CW = 5, CH = 8, CGAP = 3;
 const cv = document.getElementById('lcd');
@@ -42,22 +42,24 @@ const ctx = cv.getContext('2d');
 const glyphs = {};
 function glyph(code) {
   if (glyphs[code]) return glyphs[code];
-  const c = document.createElement('canvas'); c.width = 10; c.height = 16;
+  // 5x8-Raster aus einer fetten Monospace-Schrift abtasten (je Punkt 4x4 Pixel)
+  const S = 4, c = document.createElement('canvas'); c.width = CW * S; c.height = CH * S;
   const g = c.getContext('2d', {willReadFrequently:true});
-  g.fillStyle = '#000'; g.fillRect(0, 0, 10, 16);
-  g.fillStyle = '#fff'; g.font = '14px monospace'; g.textBaseline = 'top';
+  g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = '#fff'; g.font = 'bold 27px "DejaVu Sans Mono", Menlo, Consolas, monospace';
+  g.textBaseline = 'alphabetic'; g.textAlign = 'center';
   let ch = String.fromCharCode(code);
-  if (code === 0x7e) ch = '→'; else if (code === 0x7f) ch = '←';
-  else if (code === 0x5c) ch = '¥';   // HD44780 A00: Yen statt Backslash
-  else if (code > 0x7f) ch = '░';
-  g.fillText(ch, 1, 1);
-  const d = g.getImageData(0, 0, 10, 16).data, rows = [];
+  if (code === 0x7e) ch = '\u2192'; else if (code === 0x7f) ch = '\u2190';
+  else if (code === 0x5c) ch = '\u00a5';   // HD44780 A00: Yen statt Backslash
+  else if (code > 0x7f) ch = '\u2591';
+  g.fillText(ch, c.width / 2, 7 * S - 1);
+  const d = g.getImageData(0, 0, c.width, c.height).data, rows = [];
   for (let y = 0; y < CH; y++) {
     let bits = 0;
     for (let x = 0; x < CW; x++) {
-      let s = 0;
-      for (let yy = 0; yy < 2; yy++) for (let xx = 0; xx < 2; xx++) s += d[((y * 2 + yy) * 10 + x * 2 + xx) * 4];
-      if (s > 300) bits |= 0x10 >> x;
+      let sum = 0;
+      for (let yy = 0; yy < S; yy++) for (let xx = 0; xx < S; xx++) sum += d[((y * S + yy) * c.width + x * S + xx) * 4];
+      if (sum > 255 * S * S * 0.35) bits |= 0x10 >> x;
     }
     rows.push(bits);
   }
@@ -100,7 +102,7 @@ for (const k of ['PREV', 'NEXT', 'SEL']) {
 const kmap = {ArrowLeft:'PREV', ArrowRight:'NEXT', Enter:'SEL'};
 document.addEventListener('keydown', e => { if (kmap[e.key] && !e.repeat) key(kmap[e.key], true); });
 document.addEventListener('keyup', e => { if (kmap[e.key]) key(kmap[e.key], false); });
-document.querySelector('.info:last-child code').textContent =
+document.getElementById('curl').textContent =
   `curl -X POST 'http://localhost:${location.port}/key?k=SEL&ms=200'`;
 poll();
 </script>
