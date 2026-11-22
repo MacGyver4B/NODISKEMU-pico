@@ -883,11 +883,17 @@ void handle_ieee488(void) {
     ieee488_SetNDAC(1);                   // Say data accepted
     while (!ieee488_DAV()) {              // Wait for DAV high
       if (ieee488_ATN_received ||         // new ATN cycle?
-          ieee488_ATN()        ||         // ATN cycle aborted?
           ieee488_CheckIFC())             // interface clear?
       {
          return;
       }
+      // ATN cycle aborted? Only if DAV is still low: an interrupt (the
+      // timer ISR takes about 38 us) can delay this loop until the
+      // controller has released DAV *and* ATN after the last command
+      // byte. That byte (often the secondary address after TALK or
+      // LISTEN) is complete and must still be processed.
+      if (ieee488_ATN() && !ieee488_DAV())
+         return;
     }
 
     cmd3   = cmd & 0b11100000;
