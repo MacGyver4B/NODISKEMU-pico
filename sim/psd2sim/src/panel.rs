@@ -1,6 +1,6 @@
 //! Bedienfeld des petSD+ (Board petsd2_dip40) fuer psd2sim:
-//!   - LCD 20x4 (HD44780U ROM-Code A00, mit PSD2_LCDROM=A02 der europaeische / WS0010) an GPIO 25/29/34/35 (DB4-DB7), 36 (RS), 37 (E)
-//!   - Tasten PREV/NEXT/SEL als Widerstandsleiter an ADC7 (GPIO 47) hinter
+//!   - LCD 20x4 (HD44780U ROM-Code A00, mit PSD2_LCDROM=A02 der europaeische / WS0010) an GPIO 16/17/18/2 (DB4-DB7), 13 (RS), 14 (E)
+//!   - Tasten PREV/NEXT/SEL als Widerstandsleiter an ADC0 (GPIO 40) hinter
 //!     dem Teiler 56k/100k
 //!   - I2C1: ATtiny25 (0x26, PWM Kontrast/Helligkeit, IO_IEC) und DS3231 (0x68)
 //!   - Webseite auf localhost (Anzeige und Tasten), Tasten auch per HTTP
@@ -18,10 +18,11 @@ pub const KEY_SEL: u8 = 1;
 pub const KEY_NEXT: u8 = 2;
 pub const KEY_PREV: u8 = 4;
 
-const LCD_DB: [u32; 4] = [25, 29, 34, 35];
-const LCD_RS: u32 = 36;
-const LCD_E: u32 = 37;
-const ADC_CH: u32 = 7;
+// Belegung wie pico/boards/petsd2_dip40.h
+const LCD_DB: [u32; 4] = [16, 17, 18, 2];
+const LCD_RS: u32 = 13;
+const LCD_E: u32 = 14;
+const ADC_CH: u32 = 0;      // GPIO 40
 
 /// HD44780 im 4-Bit-Betrieb, nur Schreiben
 #[derive(Clone)]

@@ -112,24 +112,29 @@ typedef unsigned int rawbutton_t;
 #define PSD2_PIO_GPIO_BASE 16
 #endif
 
-/* Pruefungen: der Code liest D1-D8, ATN, IFC, EOI, DAV, TE und die LED ueber
-   die unteren SIO-Register (GPIO 0-31), NRFD und NDAC ueber die oberen
-   (32-47). Die 7516x liefern 5 V, die ADC-Pins 40-47 vertragen das nicht. */
-#if PSD2_D_BASE < 0 || PSD2_D_BASE + 7 > 31
-#  error "PSD2_D_BASE: D1-D8 muessen zusammenhaengend in GPIO 0-31 liegen"
+/* Pruefungen. Die 7516x, die I2C-Pull-ups, der SD-Schacht (MISO ueber
+   74HCT125) und CD/WP liegen auf 5 V: diese Leitungen nur auf GPIO 0-39,
+   die ADC-Pins 40-47 sind nicht 5-V-tolerant. Jede Leitung darf im unteren
+   (0-31) oder oberen SIO-Register (32-47) liegen, D1-D8 zusammenhaengend in
+   einem der beiden. */
+#define PSD2_5V_OK(p) ((p) < 40)
+#if PSD2_D_BASE < 0 || PSD2_D_BASE + 7 > 39 || (PSD2_D_BASE < 32 && PSD2_D_BASE + 7 > 31)
+#  error "PSD2_D_BASE: D1-D8 zusammenhaengend in GPIO 0-31 oder 32-39"
 #endif
-#if PSD2_TE > 31 || PSD2_ATN > 31 || PSD2_IFC > 31 || PSD2_REN > 31 || \
-    PSD2_EOI > 31 || PSD2_DAV > 31 || PSD2_LED_BUSY > 31 || PSD2_LED_DIRTY > 31
-#  error "TE, ATN, IFC, REN, EOI, DAV und LEDs muessen in GPIO 0-31 liegen"
+#if !PSD2_5V_OK(PSD2_TE) || !PSD2_5V_OK(PSD2_ATN) || !PSD2_5V_OK(PSD2_IFC) || \
+    !PSD2_5V_OK(PSD2_REN) || !PSD2_5V_OK(PSD2_EOI) || !PSD2_5V_OK(PSD2_DAV) || \
+    !PSD2_5V_OK(PSD2_NRFD) || !PSD2_5V_OK(PSD2_NDAC) || !PSD2_5V_OK(PSD2_SRQ)
+#  error "7516x-Leitungen muessen unter GPIO 40 liegen (5-V-Toleranz)"
 #endif
-#if PSD2_SD_CD > 31 || PSD2_SD_WP > 31
-#  error "PSD2_SD_CD und PSD2_SD_WP muessen in GPIO 0-31 liegen"
+#if !PSD2_5V_OK(PSD2_SD_MISO) || !PSD2_5V_OK(PSD2_SD_CD) || !PSD2_5V_OK(PSD2_SD_WP)
+#  error "SD-MISO, CD und WP muessen unter GPIO 40 liegen (5-V-Toleranz)"
 #endif
-#if PSD2_NRFD < 32 || PSD2_NRFD > 39 || PSD2_NDAC < 32 || PSD2_NDAC > 39
-#  error "NRFD und NDAC muessen in GPIO 32-39 liegen (oberes SIO-Register, unter den ADC-Pins)"
+#if defined(PSD2_I2C_SDA) && (!PSD2_5V_OK(PSD2_I2C_SDA) || !PSD2_5V_OK(PSD2_I2C_SCL))
+#  error "I2C muss unter GPIO 40 liegen (Pull-ups auf 5 V)"
 #endif
-#if PSD2_SRQ > 39
-#  error "SRQ muss unter GPIO 40 liegen (5-V-Toleranz)"
+#if defined(PSD2_I2C_SDA) && ((PSD2_I2C_SDA & 1) != 0 || (PSD2_I2C_SCL & 1) != 1 || \
+    ((PSD2_I2C_SDA / 2) & 1) != ((PSD2_I2C_SCL / 2) & 1))
+#  error "PSD2_I2C_SDA/SCL: SDA- und SCL-Pin desselben I2C-Blocks"
 #endif
 #if PSD2_PIO_GPIO_BASE != 0 && PSD2_PIO_GPIO_BASE != 16
 #  error "PSD2_PIO_GPIO_BASE muss 0 oder 16 sein"
@@ -140,17 +145,31 @@ typedef unsigned int rawbutton_t;
 #if PSD2_SD_CS == PSD2_SD_CLK || PSD2_SD_CS == PSD2_SD_MOSI || PSD2_SD_CS == PSD2_SD_MISO
 #  error "PSD2_SD_CS darf keinen SPI-Pin doppelt belegen"
 #endif
+/* SPI-Block aus dem Takt-Pin: GPIO n gehoert zu SPI (n / 8) % 2 */
+#define PSD2_SD_SPI_IDX ((PSD2_SD_CLK / 8) % 2)
 #if (PSD2_SD_CLK % 4) != 2 || (PSD2_SD_MOSI % 4) != 3 || (PSD2_SD_MISO % 4) != 0 || \
-    ((PSD2_SD_CLK / 8) % 2) != 1 || ((PSD2_SD_MOSI / 8) % 2) != 1 || ((PSD2_SD_MISO / 8) % 2) != 1
-#  error "PSD2_SD_CLK/MOSI/MISO muessen SPI1-Pins sein (SCK, TX, RX)"
+    ((PSD2_SD_MOSI / 8) % 2) != PSD2_SD_SPI_IDX || ((PSD2_SD_MISO / 8) % 2) != PSD2_SD_SPI_IDX
+#  error "PSD2_SD_CLK/MOSI/MISO muessen SCK, TX und RX desselben SPI-Blocks sein"
 #endif
 
-#define PSD2_D_MASK   (0xffu << PSD2_D_BASE)
-#define HI(p)         (1u << ((p) - 32))
-#define LO(p)         (1u << (p))
+/* Bitmasken fuer das untere und obere SIO-Register; ein Pin im jeweils
+   anderen Register ergibt 0 (Schreiben von 0 auf set/clr ist wirkungslos).
+   Alle Pins sind Konstanten, der Compiler faltet die Fallunterscheidung. */
+#define LO(p)         ((p) >= 0 && (p) < 32 ? 1u << ((p) & 31) : 0u)
+#define HI(p)         ((p) >= 32 ? 1u << ((p) & 31) : 0u)
+#define PSD2_D_LO     (PSD2_D_BASE < 32 ? 0xffu << (PSD2_D_BASE & 31) : 0u)
+#define PSD2_D_HI     (PSD2_D_BASE >= 32 ? 0xffu << (PSD2_D_BASE & 31) : 0u)
 
 static inline uint32_t psd2_in_lo(void) { return sio_hw->gpio_in; }
 static inline uint32_t psd2_in_hi(void) { return sio_hw->gpio_hi_in; }
+
+static inline __attribute__((always_inline)) bool psd2_get(int p) {
+  return p < 32 ? (sio_hw->gpio_in & LO(p)) != 0 : (sio_hw->gpio_hi_in & HI(p)) != 0;
+}
+static inline __attribute__((always_inline)) void psd2_put(int p, bool x) {
+  if (p < 32) { if (x) sio_hw->gpio_set = LO(p);    else sio_hw->gpio_clr = LO(p); }
+  else        { if (x) sio_hw->gpio_hi_set = HI(p); else sio_hw->gpio_hi_clr = HI(p); }
+}
 
 /* ----- SD-Karte ----- */
 
@@ -160,14 +179,14 @@ static inline void sdcard_interface_init(void) {}
 static inline void sdcard_set_ss(int state) { (void)state; }   /* ueber spi_select_device */
 static inline uint8_t sdcard_detect(void) {
 #if PSD2_SD_CD >= 0 && !defined(CONFIG_IGNORE_CARD_DETECT)
-  return !(psd2_in_lo() & LO(PSD2_SD_CD));
+  return !psd2_get(PSD2_SD_CD);
 #else
   return 1;                                                   /* kein Kartenschalter */
 #endif
 }
 static inline uint8_t sdcard_wp(void) {
 #if PSD2_SD_WP >= 0
-  return (psd2_in_lo() & LO(PSD2_SD_WP)) != 0;
+  return psd2_get(PSD2_SD_WP);
 #else
   return 0;
 #endif
@@ -177,21 +196,22 @@ static inline uint8_t sdcard_wp(void) {
 
 static inline void leds_init(void) {
   sio_hw->gpio_clr = LO(PSD2_LED_BUSY) | LO(PSD2_LED_DIRTY);
+  sio_hw->gpio_hi_clr = HI(PSD2_LED_BUSY) | HI(PSD2_LED_DIRTY);
   sio_hw->gpio_oe_set = LO(PSD2_LED_BUSY) | LO(PSD2_LED_DIRTY);
+  sio_hw->gpio_hi_oe_set = HI(PSD2_LED_BUSY) | HI(PSD2_LED_DIRTY);
 }
 
 static inline __attribute__((always_inline)) void set_busy_led(uint8_t state) {
-  if (state) sio_hw->gpio_set = LO(PSD2_LED_BUSY);
-  else       sio_hw->gpio_clr = LO(PSD2_LED_BUSY);
+  psd2_put(PSD2_LED_BUSY, state);
 }
 
 static inline __attribute__((always_inline)) void set_dirty_led(uint8_t state) {
-  if (state) sio_hw->gpio_set = LO(PSD2_LED_DIRTY);
-  else       sio_hw->gpio_clr = LO(PSD2_LED_DIRTY);
+  psd2_put(PSD2_LED_DIRTY, state);
 }
 
 static inline void toggle_dirty_led(void) {
   sio_hw->gpio_togl = LO(PSD2_LED_DIRTY);
+  sio_hw->gpio_hi_togl = HI(PSD2_LED_DIRTY);
 }
 
 /* ----- Bedienung wie beim petSD+ (LCD, Tasten, ATtiny25, Uhr) -----
@@ -307,67 +327,80 @@ static inline void ieee_interface_init(void) {
 static inline void ieee_interface_init(void) {}
 #endif
 
-static inline uint8_t ieee488_ATN(void)  { return (psd2_in_lo() & LO(PSD2_ATN))  != 0; }
-static inline uint8_t ieee488_IFC(void)  { return (psd2_in_lo() & LO(PSD2_IFC))  != 0; }
-static inline uint8_t ieee488_EOI(void)  { return (psd2_in_lo() & LO(PSD2_EOI))  != 0; }
-static inline uint8_t ieee488_DAV(void)  { return (psd2_in_lo() & LO(PSD2_DAV))  != 0; }
-static inline uint8_t ieee488_NRFD(void) { return (psd2_in_hi() & HI(PSD2_NRFD)) != 0; }
-static inline uint8_t ieee488_NDAC(void) { return (psd2_in_hi() & HI(PSD2_NDAC)) != 0; }
+static inline uint8_t ieee488_ATN(void)  { return psd2_get(PSD2_ATN); }
+static inline uint8_t ieee488_IFC(void)  { return psd2_get(PSD2_IFC); }
+static inline uint8_t ieee488_EOI(void)  { return psd2_get(PSD2_EOI); }
+static inline uint8_t ieee488_DAV(void)  { return psd2_get(PSD2_DAV); }
+static inline uint8_t ieee488_NRFD(void) { return psd2_get(PSD2_NRFD); }
+static inline uint8_t ieee488_NDAC(void) { return psd2_get(PSD2_NDAC); }
 
 /* Ausgangswert setzen; ob er am Bus ankommt, entscheidet die Richtung */
-static inline void ieee488_SetEOI(bool x) {
-  if (x) sio_hw->gpio_set = LO(PSD2_EOI); else sio_hw->gpio_clr = LO(PSD2_EOI);
-}
-static inline void ieee488_SetDAV(bool x) {
-  if (x) sio_hw->gpio_set = LO(PSD2_DAV); else sio_hw->gpio_clr = LO(PSD2_DAV);
-}
-static inline void ieee488_SetNRFD(bool x) {
-  if (x) sio_hw->gpio_hi_set = HI(PSD2_NRFD); else sio_hw->gpio_hi_clr = HI(PSD2_NRFD);
-}
-static inline void ieee488_SetNDAC(bool x) {
-  if (x) sio_hw->gpio_hi_set = HI(PSD2_NDAC); else sio_hw->gpio_hi_clr = HI(PSD2_NDAC);
-}
+static inline void ieee488_SetEOI(bool x)  { psd2_put(PSD2_EOI, x); }
+static inline void ieee488_SetDAV(bool x)  { psd2_put(PSD2_DAV, x); }
+static inline void ieee488_SetNRFD(bool x) { psd2_put(PSD2_NRFD, x); }
+static inline void ieee488_SetNDAC(bool x) { psd2_put(PSD2_NDAC, x); }
 
 /* Daten: Bus low = logisch 1 (wie beim AVR invertiert) */
 static inline uint8_t ieee488_Data(void) {
-  return (uint8_t)~(psd2_in_lo() >> PSD2_D_BASE);
+  uint32_t in = PSD2_D_BASE < 32 ? psd2_in_lo() : psd2_in_hi();
+  return (uint8_t)~(in >> (PSD2_D_BASE & 31));
 }
 
+/* erst freigeben, dann ziehen: zwei atomare Schreibzugriffe, kein
+   Lesen-Aendern-Schreiben (ISR und anderer Kern setzen dieselben Register) */
 static inline void ieee488_SetData(uint8_t data) {
-  sio_hw->gpio_out = (sio_hw->gpio_out & ~PSD2_D_MASK) |
-                     ((uint32_t)(uint8_t)~data << PSD2_D_BASE);
+  uint32_t rel  = (uint32_t)(uint8_t)data << (PSD2_D_BASE & 31);   /* Bit 1 = Pin low */
+  uint32_t pull = rel;
+  rel = ~rel;
+  if (PSD2_D_BASE < 32) {
+    sio_hw->gpio_set = rel & PSD2_D_LO;
+    sio_hw->gpio_clr = pull & PSD2_D_LO;
+  } else {
+    sio_hw->gpio_hi_set = rel & PSD2_D_HI;
+    sio_hw->gpio_hi_clr = pull & PSD2_D_HI;
+  }
 }
 
-static inline void ieee488_SetTE(bool x) {
-  if (x) sio_hw->gpio_set = LO(PSD2_TE); else sio_hw->gpio_clr = LO(PSD2_TE);
-}
+static inline void ieee488_SetTE(bool x) { psd2_put(PSD2_TE, x); }
 
 /* Datenleitungen: Richtung der GPIOs; TE schaltet CtrlPorts* (gemeinsam) */
 static inline void ieee488_DataListen(void) {
-  sio_hw->gpio_oe_clr = PSD2_D_MASK;      /* Daten als Eingang */
+  sio_hw->gpio_oe_clr = PSD2_D_LO;        /* Daten als Eingang */
+  sio_hw->gpio_hi_oe_clr = PSD2_D_HI;
   ieee488_TE75160 = 0;
 }
 
 static inline void ieee488_DataTalk(void) {
-  sio_hw->gpio_set = PSD2_D_MASK;         /* alle Leitungen frei */
-  sio_hw->gpio_oe_set = PSD2_D_MASK;      /* Daten als Ausgang */
+  sio_hw->gpio_set = PSD2_D_LO;           /* alle Leitungen frei */
+  sio_hw->gpio_hi_set = PSD2_D_HI;
+  sio_hw->gpio_oe_set = PSD2_D_LO;        /* Daten als Ausgang */
+  sio_hw->gpio_hi_oe_set = PSD2_D_HI;
   ieee488_TE75160 = 1;
 }
 
 /* Reihenfolge wie ieee.c beim petSD+ (HAVE_7516X) */
+#define PSD2_EOIDAV_LO (LO(PSD2_EOI) | LO(PSD2_DAV))
+#define PSD2_EOIDAV_HI (HI(PSD2_EOI) | HI(PSD2_DAV))
+#define PSD2_HS_LO     (LO(PSD2_NDAC) | LO(PSD2_NRFD))
+#define PSD2_HS_HI     (HI(PSD2_NDAC) | HI(PSD2_NRFD))
+
 static inline void ieee488_CtrlPortsListen(void) {
-  sio_hw->gpio_oe_clr = LO(PSD2_EOI) | LO(PSD2_DAV);       /* EOI, DAV Eingang */
+  sio_hw->gpio_oe_clr = PSD2_EOIDAV_LO;      /* EOI, DAV Eingang */
+  sio_hw->gpio_hi_oe_clr = PSD2_EOIDAV_HI;
   ieee488_SetTE(0);
-  sio_hw->gpio_hi_oe_set = HI(PSD2_NDAC) | HI(PSD2_NRFD);  /* NDAC, NRFD Ausgang */
+  sio_hw->gpio_oe_set = PSD2_HS_LO;          /* NDAC, NRFD Ausgang */
+  sio_hw->gpio_hi_oe_set = PSD2_HS_HI;
   ieee488_TE75161 = 0;
 }
 
 static inline void ieee488_CtrlPortsTalk(void) {
-  sio_hw->gpio_hi_oe_clr = HI(PSD2_NDAC) | HI(PSD2_NRFD);  /* NDAC, NRFD Eingang */
+  sio_hw->gpio_oe_clr = PSD2_HS_LO;          /* NDAC, NRFD Eingang */
+  sio_hw->gpio_hi_oe_clr = PSD2_HS_HI;
   ieee488_SetDAV(1);
   ieee488_SetEOI(1);
   ieee488_SetTE(1);
-  sio_hw->gpio_oe_set = LO(PSD2_EOI) | LO(PSD2_DAV);       /* EOI, DAV Ausgang */
+  sio_hw->gpio_oe_set = PSD2_EOIDAV_LO;      /* EOI, DAV Ausgang */
+  sio_hw->gpio_hi_oe_set = PSD2_EOIDAV_HI;
   ieee488_TE75161 = 1;
 }
 

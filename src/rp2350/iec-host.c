@@ -5,8 +5,9 @@
 #include "config.h"
 #include "iec-host.h"
 
-#if IEC_CLK_O < PSD2_PIO_GPIO_BASE || IEC_DATA_O > PSD2_PIO_GPIO_BASE + 31 || \
-    IEC_CLK_I < PSD2_PIO_GPIO_BASE || IEC_SRQ_I > PSD2_PIO_GPIO_BASE + 31
+#define IEC_IN_WIN(p) ((p) >= PSD2_PIO_GPIO_BASE && (p) <= PSD2_PIO_GPIO_BASE + 31)
+#if !IEC_IN_WIN(IEC_CLK_O) || !IEC_IN_WIN(IEC_DATA_O) || !IEC_IN_WIN(IEC_CLK_I) || \
+    !IEC_IN_WIN(IEC_DATA_I) || !IEC_IN_WIN(IEC_ATN_I) || !IEC_IN_WIN(IEC_SRQ_I)
 #  error "IEC-Pins muessen im PIO-Fenster liegen (PSD2_PIO_GPIO_BASE..+31)"
 #endif
 #include "ar6put.pio.h"
@@ -17,19 +18,22 @@ static uint asm_sm;
 bool iec_pio_mode;
 /* 64-Bit-Maske zur Laufzeit bauen: als Konstante laedt GCC sie per
    vldr d7, das picoem (nur Single-Precision-FPU) nicht kennt */
-static volatile uint32_t pio_mask_hi = (1u << (IEC_CLK_O - 32)) | (1u << (IEC_DATA_O - 32));
-static uint64_t pio_mask(void) { return (uint64_t)pio_mask_hi << 32; }
+static volatile uint32_t pio_mask_lo = IEC_LO(IEC_CLK_O) | IEC_LO(IEC_DATA_O);
+static volatile uint32_t pio_mask_hi = IEC_HI(IEC_CLK_O) | IEC_HI(IEC_DATA_O);
+static uint64_t pio_mask(void) { return ((uint64_t)pio_mask_hi << 32) | pio_mask_lo; }
 
 uint32_t iec_cyc_per_us;
 
 void iec_host_init(void) {
-  for (uint p = IEC_CLK_I; p <= IEC_SRQ_I; p++) {
-    gpio_init(p);                         /* Eingaenge vom 74LVC14A */
+  static const uint8_t ins[]  = { IEC_CLK_I, IEC_DATA_I, IEC_ATN_I, IEC_SRQ_I };
+  static const uint8_t outs[] = { IEC_CLK_O, IEC_DATA_O, IEC_ATN_O, IEC_SRQ_O, IEC_RESET_O };
+  for (uint i = 0; i < sizeof ins; i++) {
+    gpio_init(ins[i]);                    /* Eingaenge vom Eingangspuffer */
   }
-  for (uint p = IEC_CLK_O; p <= IEC_RESET_O; p++) {
-    gpio_init(p);
-    gpio_put(p, 1);                       /* high = Leitung frei (74LS07) */
-    gpio_set_dir(p, GPIO_OUT);
+  for (uint i = 0; i < sizeof outs; i++) {
+    gpio_init(outs[i]);
+    gpio_put(outs[i], 1);                 /* high = Leitung frei (74xx07) */
+    gpio_set_dir(outs[i], GPIO_OUT);
   }
   /* DWT-Zykluszaehler einschalten: DEMCR.TRCENA, DWT_CTRL.CYCCNTENA */
   *(volatile uint32_t *)0xE000EDFCu |= 1u << 24;

@@ -1,12 +1,14 @@
-/* i2c_hw.c - Hardware-I2C1 fuer petSD2 (RP2350), ohne config.h, weil
-   NODISKEMU ein eigenes i2c_init() hat (wie uart_hw.c) */
+/* i2c_hw.c - Hardware-I2C fuer petSD2 (RP2350), ohne config.h, weil
+   NODISKEMU ein eigenes i2c_init() hat (wie uart_hw.c). Der Block (I2C0
+   oder I2C1) folgt aus den Pins: GPIO n gehoert zu I2C (n / 2) % 2. */
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 
-#define I2C_BUS      i2c1
+static i2c_inst_t *I2C_BUS = i2c1;
 #define I2C_TIMEOUT  5000          /* us pro Uebertragung */
 
 void hwi2c_init(unsigned sda, unsigned scl, unsigned hz) {
+  I2C_BUS = ((sda / 2) & 1) ? i2c1 : i2c0;
   i2c_init(I2C_BUS, hz);
   gpio_set_function(sda, GPIO_FUNC_I2C);
   gpio_set_function(scl, GPIO_FUNC_I2C);

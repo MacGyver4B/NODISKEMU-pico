@@ -45,9 +45,9 @@ die 7516x Pegel liefern.
 Das ist die Vorgabe in `src/rp2350/arch-config.h` (`PSD2_*`, SD-Karte, PIO-Fenster)
 und `src/rp2350/iec-host.h` (`IEC_*`). Eine Board-Datei kann jeden Pin
 überschreiben. Beim Übersetzen wird geprüft, ob die Belegung zum Code passt:
-D1–D8 zusammenhängend in GPIO 0–31, NRFD/NDAC in 32–39, alle 7516x-Leitungen
-unter 40, IEC-Eingänge als Block von vier und Ausgänge als Block von fünf Pins
-(DATA_O direkt hinter CLK_O) in 32–47, alles im PIO-Fenster, SD an SPI1-Pins.
+D1–D8 zusammenhängend in GPIO 0–31 oder 32–39, alle 7516x-Leitungen
+unter 40, IEC-Pins beliebig in 0–47 (DATA_O direkt hinter CLK_O), alles im
+PIO-Fenster, SD an SCK/TX/RX desselben SPI-Blocks, I²C an SDA/SCL desselben Blocks.
 IEEE und IEC zusammen brauchen den RP2350B; ein RP2350A (GPIO 0–29) reicht nicht.
 
 | Board-Datei | Board | Flash |
@@ -61,11 +61,18 @@ IEEE und IEC zusammen brauchen den RP2350B; ein RP2350A (GPIO 0–29) reicht nic
 ### petSD2 im DIP40-Sockel (`petsd2_dip40`)
 
 Belegung nach `pico/boards/petsd2_dip40.h` (Herleitung im docufolder,
-`petsd2/adapter-dip40-pinout.md`): IEEE wie oben ohne REN und SRQ (beim petSD+ nicht
-angeschlossen), LEDs dirty/busy an GPIO 4/5, SD-Schacht des petSD+ an SPI1
-(GPIO 12–15, Kartenschalter 2, Schreibschutz 3), I²C1 an GPIO 6/7 (ATtiny25 0x4C,
-DS3231 0xD0), LCD 20×4 an GPIO 25/29/34/35 (DB4–DB7), 36 (RS), 37 (E), Tasten an
-ADC7 (GPIO 47) hinter dem Teiler 56k/100k, IEC-Host ein 43–46, aus 38–42.
+`petsd2/adapter-dip40-pinout.md`), gewählt nach der Platine: Das Olimex sitzt
+1,27 mm gegen H1 versetzt, jede Leitung geht zum GPIO neben ihrem H1-Pin.
+D1–D8 an GPIO 32–39, NRFD 24, NDAC 25, DAV 26, EOI 27, ATN 28, TE 29, IFC 12
+(REN und SRQ beim petSD+ nicht angeschlossen), LEDs dirty/busy an 10/11,
+SD-Schacht des petSD+ an SPI0 (CS 3, MOSI 19, MISO 20, SCK 22, Kartenschalter 15,
+Schreibschutz 9), I²C1 an 30/31 (ATtiny25 0x4C, DS3231 0xD0), LCD 20×4 an
+16/17/18/2 (DB4–DB7), 13 (RS), 14 (E), Tasten an ADC0 (GPIO 40) hinter dem Teiler
+56k/100k, IEC-Host aus 41–45 (CLK, DATA, ATN, SRQ, RESET), ein 46/47/21/23
+(CLK, DATA, ATN, SRQ). Alle 5-V-Leitungen liegen unter GPIO 40, alle PIO-Leitungen
+im Fenster 16–47. Die Firmware erlaubt jede Leitung im unteren oder oberen
+SIO-Register; die Prüfungen in `arch-config.h` und `iec-host.h` melden ungültige
+Belegungen schon beim Übersetzen.
 
 Die Bedienung entspricht dem petSD+ (AVR): Startbild, Statusanzeige, Menü mit
 PREV/NEXT/SEL, Geräteadresse über die Tasten, wenn das Menü abgeschaltet ist,

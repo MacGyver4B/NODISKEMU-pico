@@ -5,8 +5,8 @@
 //! Wie petsdsim (simavr) eine Kopplung mit Vorausschau: Eingaenge vom Bus
 //! wirken L spaeter auf den RP2350, dafuer darf er bis Fortschritt der
 //! anderen + L rechnen. Nachgebildet auf Pin-Ebene:
-//!   IEEE: SN75160/75161 (DC = high, Geraet), TE = GPIO 26 (high = sprechen)
-//!     16-23 D1-D8, 27 ATN, 28 IFC, 29 REN, 30 EOI, 31 DAV, 32 NRFD,
+//!   IEEE: SN75160/75161 (DC = high, Geraet), Pins je Board (struct Pins):
+//!     XXL: 16-23 D1-D8, 26 TE, 27 ATN, 28 IFC, 29 REN, 30 EOI, 31 DAV, 32 NRFD,
 //!     33 NDAC, 34 SRQ
 //!   IEC: 39-42 CLK/DATA/ATN/SRQ ueber 74LVC14A (invertiert),
 //!     43-47 CLK/DATA/ATN/SRQ/RESET ueber 74LS07 (Pin low = Leitung low)
@@ -14,8 +14,9 @@
 //! ist; ein offener Pin gilt am TTL-Eingang des Treibers als high.
 //!
 //! -b dip40: Belegung des petSD2 im DIP40-Sockel des petSD+ (Board
-//!   petsd2_dip40): kein REN/SRQ am IEEE-Bus, IEC ein 43-46, aus 38-42,
-//!   Kartenschalter/Schreibschutz an GPIO 2/3, dazu das Bedienfeld (LCD,
+//!   petsd2_dip40): kein REN/SRQ am IEEE-Bus, D1-D8 an 32-39, IEC ein
+//!   46/47/21/23, aus 41-45,
+//!   Kartenschalter/Schreibschutz an GPIO 15/9, dazu das Bedienfeld (LCD,
 //!   Tasten, ATtiny25, DS3231, panel.rs) mit Webseite auf -w Port (8488).
 //!   -k PREV|NEXT|SEL haelt Tasten ab dem Start (z. B. PREV = Diagnose).
 //!   -r A00|A02 waehlt den Zeichensatz des LCD (Vorgabe A00, passend zu
@@ -34,6 +35,14 @@ mod panel;
 
 /// Pinbelegung des Boards
 struct Pins {
+    d_base: u32,          // D1-D8 zusammenhaengend
+    te: u32,
+    atn: u32,
+    ifc: u32,
+    eoi: u32,
+    dav: u32,
+    nrfd: u32,
+    ndac: u32,
     ren: Option<u32>,
     srq: Option<u32>,
     iec_in: [u32; 4],     // CLK, DATA, ATN, SRQ (74LVC14A)
@@ -43,12 +52,24 @@ struct Pins {
 
 impl Pins {
     fn xxl() -> Self {
-        Pins { ren: Some(29), srq: Some(34), iec_in: [39, 40, 41, 42],
+        Pins { d_base: 16, te: 26, atn: 27, ifc: 28, eoi: 30, dav: 31, nrfd: 32, ndac: 33,
+               ren: Some(29), srq: Some(34), iec_in: [39, 40, 41, 42],
                iec_out: [43, 44, 45, 46, 47], sd_cd_wp: None }
     }
     fn dip40() -> Self {
-        Pins { ren: None, srq: None, iec_in: [43, 44, 45, 46],
-               iec_out: [38, 39, 40, 41, 42], sd_cd_wp: Some((2, 3)) }
+        // wie pico/boards/petsd2_dip40.h
+        Pins { d_base: 32, te: 29, atn: 28, ifc: 12, eoi: 27, dav: 26, nrfd: 24, ndac: 25,
+               ren: None, srq: None, iec_in: [46, 47, 21, 23],
+               iec_out: [41, 42, 43, 44, 45], sd_cd_wp: Some((15, 9)) }
+    }
+    /// alle IEEE-Eingaenge (ohne Bus: frei = high)
+    fn ieee_mask(&self) -> u64 {
+        let mut m = 0xffu64 << self.d_base;
+        for p in [self.atn, self.ifc, self.eoi, self.dav, self.nrfd, self.ndac] {
+            m |= 1 << p;
+        }
+        if let Some(r) = self.ren { m |= 1 << r; }
+        m
     }
 }
 
@@ -229,28 +250,29 @@ impl Bridge {
                     d = 0;
                 }
                 if !b.iec {
-                    // SN75160/75161, DC = high (Geraet), TE = GPIO 26:
+                    // SN75160/75161, DC = high (Geraet), ein TE fuer beide:
                     // ATN, IFC, REN immer empfangen; TE low: EOI, DAV, Daten
                     // empfangen; TE high: NRFD, NDAC empfangen. Bei TE high
                     // und ATN aktiv empfaengt der 75161 auch EOI.
-                    let te = high(out, oe, 26);
+                    let pn = &self.pins;
+                    let te = high(out, oe, pn.te);
                     let atn_low = l & ATN != 0;
-                    put(27, l & ATN == 0);
-                    put(28, l & IFC == 0);
-                    if let Some(ren) = self.pins.ren {
+                    put(pn.atn, l & ATN == 0);
+                    put(pn.ifc, l & IFC == 0);
+                    if let Some(ren) = pn.ren {
                         put(ren, l & REN == 0);
                     }
                     if !te || atn_low {
-                        put(30, l & EOI == 0);
+                        put(pn.eoi, l & EOI == 0);
                     }
                     if !te {
-                        put(31, l & DAV == 0);
+                        put(pn.dav, l & DAV == 0);
                         for i in 0..8 {
-                            put(16 + i, d & (1 << i) == 0);
+                            put(pn.d_base + i, d & (1 << i) == 0);
                         }
                     } else {
-                        put(32, l & NRFD == 0);
-                        put(33, l & NDAC == 0);
+                        put(pn.nrfd, l & NRFD == 0);
+                        put(pn.ndac, l & NDAC == 0);
                     }
                 } else {
                     // 74LVC14A invertiert: Pin high = Leitung low
@@ -294,19 +316,20 @@ impl Bridge {
             if !b.iec {
                 // SN75160/75161: der Controller-Pin wird nur in Senderichtung
                 // auf den Bus gegeben; ein offener TTL-Eingang gilt als high
-                let te = high(out, oe, 26);
+                let pn = &self.pins;
+                let te = high(out, oe, pn.te);
                 let atn_in = b.ext_pull & ATN != 0;
                 if te {
-                    if pulled(out, oe, 30) && !atn_in { p |= EOI; }
-                    if pulled(out, oe, 31) { p |= DAV; }
+                    if pulled(out, oe, pn.eoi) && !atn_in { p |= EOI; }
+                    if pulled(out, oe, pn.dav) { p |= DAV; }
                     for i in 0..8 {
-                        if pulled(out, oe, 16 + i) {
+                        if pulled(out, oe, pn.d_base + i) {
                             d |= 1 << i;
                         }
                     }
                 } else {
-                    if pulled(out, oe, 32) { p |= NRFD; }
-                    if pulled(out, oe, 33) { p |= NDAC; }
+                    if pulled(out, oe, pn.nrfd) { p |= NRFD; }
+                    if pulled(out, oe, pn.ndac) { p |= NDAC; }
                 }
                 if let Some(srq) = self.pins.srq {
                     if pulled(out, oe, srq) { p |= SRQ; }
@@ -450,7 +473,7 @@ fn main() {
     if let Ok(ms) = std::env::var("PSD2_SOLO") {
         // ohne Bus: alle Eingaenge frei, nur Firmware und Postfach
         let ms: f64 = ms.parse().unwrap_or(1000.0);
-        let mask: u64 = (0xff << 16) | (0x7f << 27);
+        let mask: u64 = br.pins.ieee_mask();
         let cdwp: u64 = br.pins.sd_cd_wp.map(|(c, w)| (1u64 << c) | (1u64 << w)).unwrap_or(0);
         emu.bus.gpio_external_in.store(mask as u32, Ordering::Relaxed);
         emu.bus.gpio_external_mask = (mask | cdwp) as u32;
@@ -466,7 +489,7 @@ fn main() {
             br.panel_step(&mut emu);
             let now = (emu.cycles() as f64) / hz * 1000.0;
             if atn_at >= 0.0 && !atn_done && now >= atn_at {
-                let v = mask & !(1u64 << 27);
+                let v = mask & !(1u64 << br.pins.atn);
                 emu.bus.gpio_external_in.store(v as u32, Ordering::Relaxed);
                 atn_done = true;
                 eprintln!("psd2sim: ATN low bei {:.3} ms", now);
@@ -480,7 +503,7 @@ fn main() {
                     pp.nvic_iser[1].load(Ordering::Relaxed), emu.core(0).regs.primask, emu.core(0).regs.basepri, emu.core(0).regs.faultmask, emu.core(0).regs.ipsr(), pp.icsr);
                 eprintln!("  {:.4} ms PC {:08x} raw {:05x} inte {:05x} ints {:05x} NRFD_O pulled {} NDAC_O pulled {} in {:012x}",
                     now, emu.core(0).regs.pc(), p.raw_intr_rp2350(), p.int0_inte, p.int0_ints_rp2350(),
-                    pulled(out, oe, 36), pulled(out, oe, 37), emu.gpio_read_all());
+                    pulled(out, oe, br.pins.nrfd), pulled(out, oe, br.pins.ndac), emu.gpio_read_all());
             }
         }
         {

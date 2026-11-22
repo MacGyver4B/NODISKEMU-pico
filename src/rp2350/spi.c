@@ -1,4 +1,4 @@
-/* spi.c - SPI1 fuer die microSD-Karte
+/* spi.c - SPI0 oder SPI1 (aus den Pins) fuer die SD-Karte
 
    Belegung aus arch-config.h bzw. der Board-Datei (Vorgabe GPIO 9 CS,
    10 CLK, 11 CMD/MOSI, 24 DAT0/MISO). CS wird von Hand gesetzt. Im
@@ -18,6 +18,7 @@
 #define SD_CLK  PSD2_SD_CLK
 #define SD_MOSI PSD2_SD_MOSI
 #define SD_MISO PSD2_SD_MISO
+#define SD_SPI  (PSD2_SD_SPI_IDX ? spi1 : spi0)
 
 #ifdef PSD2_EMU
 
@@ -69,12 +70,12 @@ void spi_rx_block(void *data, unsigned int length) {
 #else
 
 void spi_set_speed(spi_speed_t speed) {
-  spi_set_baudrate(spi1, speed == SPI_SPEED_SLOW ? 400000 : 25000000);
+  spi_set_baudrate(SD_SPI, speed == SPI_SPEED_SLOW ? 400000 : 25000000);
 }
 
 void nde_spi_init(spi_speed_t speed) {
-  (spi_init)(spi1, 400000);   /* SDK-Funktion, nicht das Makro aus spi.h */
-  spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+  (spi_init)(SD_SPI, 400000);   /* SDK-Funktion, nicht das Makro aus spi.h */
+  spi_set_format(SD_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
   gpio_set_function(SD_CLK, GPIO_FUNC_SPI);
   gpio_set_function(SD_MOSI, GPIO_FUNC_SPI);
   gpio_set_function(SD_MISO, GPIO_FUNC_SPI);
@@ -90,21 +91,21 @@ void spi_select_device(spi_device_t dev) {
 }
 
 void spi_tx_byte(uint8_t data) {
-  spi_write_blocking(spi1, &data, 1);
+  spi_write_blocking(SD_SPI, &data, 1);
 }
 
 uint8_t spi_rx_byte(void) {
   uint8_t r;
-  spi_read_blocking(spi1, 0xff, &r, 1);
+  spi_read_blocking(SD_SPI, 0xff, &r, 1);
   return r;
 }
 
 void spi_tx_block(const void *data, unsigned int length) {
-  spi_write_blocking(spi1, data, length);
+  spi_write_blocking(SD_SPI, data, length);
 }
 
 void spi_rx_block(void *data, unsigned int length) {
-  spi_read_blocking(spi1, 0xff, data, length);
+  spi_read_blocking(SD_SPI, 0xff, data, length);
 }
 
 #endif
