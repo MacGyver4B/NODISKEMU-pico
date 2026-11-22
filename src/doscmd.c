@@ -1251,6 +1251,11 @@ static void handle_memread(void) {
 
   } else {
   use_internal:
+    /* Drive memory we do not emulate reads as zero, not as whatever the
+       error buffer held before (the status text). The Madison Z-RAM CP/M
+       loader checks $43A4 of an 8050 and expects 0 (or 255 on a drive
+       that needs its patch); anything else stops it with DISK UNIT ERROR. */
+    memset(error_buffer, 0, sizeof(error_buffer));
     /* Check some special addresses used for drive detection. */
     p = (magic_value_t*) c1541_magics;
     while ( (check = pgm_read_word(&p->address)) ) {
