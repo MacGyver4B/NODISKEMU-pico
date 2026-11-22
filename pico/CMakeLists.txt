@@ -52,7 +52,7 @@ add_executable(petsd2
   ${NDE}/rp2350/arch-timer.c ${NDE}/rp2350/spi.c ${NDE}/rp2350/system.c
   ${NDE}/rp2350/uart.c ${NDE}/rp2350/uart_hw.c ${NDE}/rp2350/crc.c
   ${NDE}/rp2350/ieee-ll.c ${NDE}/rp2350/iec-host.c
-  ${NDE}/rp2350/i2c.c ${NDE}/rp2350/i2c_hw.c
+  ${NDE}/rp2350/i2c.c ${NDE}/rp2350/i2c_hw.c ${NDE}/rp2350/arch-eeprom.c
 )
 if(PSD2_MD)
   target_sources(petsd2 PRIVATE ${NDE}/multidrive.c)

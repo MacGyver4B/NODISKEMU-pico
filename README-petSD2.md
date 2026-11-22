@@ -133,6 +133,13 @@ AR6CRT=/pfad/ar6.crt ./test/mkwork.sh          # Testdaten nach $WORK (/tmp/psd)
 ./test/run-relay-tests.sh ss1571 ds1571 std1581 # weitere Fälle
 ```
 
+**Einstellungen (EEPROM):** 2 KB wie beim AVR angesprochen (`src/rp2350/arch-eeprom.c`).
+Beim ersten Zugriff sucht die Firmware am I²C-Bus: antworten 0x57 und 0x50 → 24C16-Typ
+(z. B. M24C16 der ChronoDot v3.0), nur 0x57 → 24C32/64 auf einem DS3231-Modul, nur
+0x50 → 24C32/64 auf dem Lötpad des Adapters (A0–A2 an GND), keiner → Datei
+`PETSD2.EEP` im Wurzelverzeichnis der Karte (nur dann). Nur ein EEPROM bestücken.
+In psd2sim: `PSD_EEPROM=24c32|24c32@57|m24c16`, Inhalt in `PSD_EEPROM_FILE`.
+
 **Vergleich mit dem Original (petSD+, AVR):** `petsdsim` aus VICE-LRE-SIMLINK
 (`src/simlink/test/petsdsim.c`, mit `-DPSDPANEL` gegen `sim/psdpanel/target/release/libpsdpanel.a`
 gebaut) hängt dasselbe Bedienfeld an die unveränderte NODISKEMU-Firmware des
@@ -172,7 +179,7 @@ Ergebnisse (Stand 19.11.2026, PET 4032 in xpet, 23.104 Bytes, alles bytegleich):
 | 1571 doppelseitig | AR6 bis Spur 35, dann normal | normal |
 | 1581 AR6 | 6.143 B/s (IEC) | normal |
 
-Bekannte Lücken: Burst (1571/1581), Konfiguration im Flash; REL-Dateien in Images
+Bekannte Lücken: Burst (1571/1581); REL-Dateien in Images
 fehlen schon in NODISKEMU selbst.
 
 ## Lizenz

@@ -11,6 +11,10 @@
 //!   - Tastenfolge in simulierter Zeit: PSD_KEYS="6000:NEXT:200,8000:SEL:300"
 //!     (ab ms: Taste(n) fuer ms gedrueckt), reproduzierbar fuer Vergleiche
 //!   - PSD2_LCDDUMP=1: jede Aenderung der Anzeige mit simulierter Zeit
+//!   - PSD_EEPROM=24c32 | 24c32@57 | m24c16: I2C-EEPROM am Bus (AT24C32 auf
+//!     0x50 bzw. 0x57, 2-Byte-Adresse; M24C16 der ChronoDot v3.0 auf
+//!     0x50-0x57, Block in der I2C-Adresse); Inhalt in PSD_EEPROM_FILE
+//!     (wird bei jedem STOP nach einem Schreibzugriff gespeichert)
 //!   - PSD_RTC_START=1795370400: DS3231 ab diesem Zeitpunkt (Unix-Sekunden,
 //!     als Ortszeit) in simulierter Zeit, statt mit der Rechnerzeit
 
@@ -270,9 +274,98 @@ fn parse_script(s: &str) -> Vec<(f64, u8, f64)> {
     v
 }
 
+/// I2C-EEPROM (AT24C32 oder M24C16) fuer die Einstellungen
+pub struct Eeprom {
+    /// Basisadresse (7 Bit); M24C16 belegt base..base+7
+    base: u8,
+    m24c16: bool,
+    mem: Vec<u8>,
+    page: usize,
+    file: Option<String>,
+    // laufende Uebertragung
+    ptr: usize,
+    addr_bytes: u8,
+    written: bool,
+}
+
+impl Eeprom {
+    pub fn from_env() -> Option<Eeprom> {
+        let kind = std::env::var("PSD_EEPROM").ok()?.to_ascii_lowercase();
+        let (base, m24c16, size, page) = match kind.as_str() {
+            "24c32" | "at24c32" => (0x50, false, 4096, 32),
+            "24c32@57" | "at24c32@57" => (0x57, false, 4096, 32),
+            "m24c16" | "24c16" => (0x50, true, 2048, 16),
+            _ => return None,
+        };
+        let file = std::env::var("PSD_EEPROM_FILE").ok();
+        let mut mem = vec![0xffu8; size];
+        if let Some(f) = &file {
+            if let Ok(d) = std::fs::read(f) {
+                let n = d.len().min(size);
+                mem[..n].copy_from_slice(&d[..n]);
+            }
+        }
+        eprintln!("psdpanel: EEPROM {} auf 0x{:02x}{}", kind, base,
+                  if m24c16 { "-0x57" } else { "" });
+        Some(Eeprom { base, m24c16, mem, page, file, ptr: 0, addr_bytes: 0, written: false })
+    }
+
+    fn claims(&self, addr: u8) -> bool {
+        if self.m24c16 { addr & 0x78 == 0x50 } else { addr == self.base }
+    }
+
+    fn start(&mut self, addr: u8, read: bool) {
+        if self.m24c16 {
+            // Block (A8-A10) steckt in der I2C-Adresse
+            self.ptr = ((addr as usize & 7) << 8) | (self.ptr & 0xff);
+        }
+        if !read {
+            self.addr_bytes = 0;
+        }
+    }
+
+    fn write(&mut self, b: u8) {
+        let need = if self.m24c16 { 1 } else { 2 };
+        if self.addr_bytes < need {
+            if self.m24c16 {
+                self.ptr = (self.ptr & 0x700) | b as usize;
+            } else if self.addr_bytes == 0 {
+                self.ptr = ((b as usize) << 8) & (self.mem.len() - 1);
+            } else {
+                self.ptr = (self.ptr & 0xff00) | b as usize;
+            }
+            self.addr_bytes += 1;
+            return;
+        }
+        let n = self.mem.len();
+        self.mem[self.ptr % n] = b;
+        // innerhalb der Seite weiterzaehlen (wie das echte Bauteil)
+        let pg = self.ptr & !(self.page - 1);
+        self.ptr = pg | ((self.ptr + 1) & (self.page - 1));
+        self.written = true;
+    }
+
+    fn read(&mut self) -> u8 {
+        let n = self.mem.len();
+        let v = self.mem[self.ptr % n];
+        self.ptr = (self.ptr + 1) % n;
+        v
+    }
+
+    fn stop(&mut self) {
+        if self.written {
+            self.written = false;
+            if let Some(f) = &self.file {
+                let _ = std::fs::write(f, &self.mem);
+            }
+        }
+    }
+}
+
 /// I2C-Seite des Bedienfelds: ATtiny25 (0x26) und DS3231 (0x68), 7-Bit-Adressen
 pub struct I2cDev {
     p: Panel,
+    ee: Option<Eeprom>,
     dev: u8,
     first: bool,
     ptr: u8,
@@ -282,7 +375,7 @@ pub struct I2cDev {
 
 impl I2cDev {
     pub fn new(p: Panel, verbose: u32) -> Self {
-        I2cDev { p, dev: 0, first: true, ptr: 0, tbuf: None, verbose }
+        I2cDev { p, ee: Eeprom::from_env(), dev: 0, first: true, ptr: 0, tbuf: None, verbose }
     }
 
     /// Start (auch wiederholt) mit 7-Bit-Adresse; true = ACK
@@ -292,6 +385,12 @@ impl I2cDev {
         }
         self.dev = addr;
         self.first = true;
+        if let Some(e) = self.ee.as_mut() {
+            if e.claims(addr) {
+                e.start(addr, read);
+                return true;
+            }
+        }
         if addr == 0x68 && self.tbuf.is_none() {
             // Zeit beim Zugriff einfrieren, wie der Puffer im DS3231
             self.tbuf = Some(self.p.lock().unwrap().rtc.time_regs());
@@ -300,6 +399,12 @@ impl I2cDev {
     }
 
     pub fn write(&mut self, byte: u8) -> bool {
+        if let Some(e) = self.ee.as_mut() {
+            if e.claims(self.dev) {
+                e.write(byte);
+                return true;
+            }
+        }
         if self.first {
             self.ptr = byte;
             self.first = false;
@@ -335,6 +440,11 @@ impl I2cDev {
     }
 
     pub fn read(&mut self) -> u8 {
+        if let Some(e) = self.ee.as_mut() {
+            if e.claims(self.dev) {
+                return e.read();
+            }
+        }
         let s = self.p.lock().unwrap();
         let v = match self.dev {
             0x26 => 1,     // I2C_SOFTWARE_VERSION, alte Firmware liefert sie immer
@@ -356,6 +466,9 @@ impl I2cDev {
     }
 
     pub fn stop(&mut self) {
+        if let Some(e) = self.ee.as_mut() {
+            e.stop();
+        }
         if self.dev == 0x68 {
             if let Some(t) = self.tbuf.take() {
                 let mut s = self.p.lock().unwrap();
