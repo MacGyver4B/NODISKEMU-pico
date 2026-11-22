@@ -7,7 +7,7 @@ SIM=$(cd "$(dirname "$0")/.." && pwd)
 R=$SIM/run-relay.sh
 OUT=$WORK/ergebnis.txt
 cd "$WORK" || exit 2
-K='fori=1to2000:next\nload"big2",9\nsave"@:chk",8\nsave"neu",9\n10 open1,9,15:input#1,a,b$:close1:printa;b$\nrun\nload"nix",9\n'
+K='fori=1to2000:next\nload"big2",9\nsave"@:chk",11\nsave"neu",9\n10 open1,9,15:input#1,a,b$:close1:printa;b$\nrun\nload"nix",9\n'
 
 check() {   # name image
   n=$1; img=$2; ok=1

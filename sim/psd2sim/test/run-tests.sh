@@ -10,7 +10,7 @@ SIM=$(cd "$T/.." && pwd)
 P=$VICE/src
 $P/tools/petcat/petcat -w40 -l 0401 -o $T/psdtest.prg -- $T/psdtest.bas || exit 2
 cd "$WORK" && cp sd.img sdt.img && mcopy -o -i sdt.img@@1M t.d81 $T/psdtest.prg ::/ || exit 2
-$T/../run-xpet.sh tst 60000000 'load"psdtest*",8\nrun\n' sdt.img > /dev/null 2>&1
+$T/../run-xpet.sh tst 60000000 'load"psdtest*",11\nrun\n' sdt.img > /dev/null 2>&1
 mtype -i sd_tst.img@@1M ::TESTLOG > log.txt 2>/dev/null || { echo "kein Testprotokoll"; exit 1; }
 n=$(tr '\r' '\n' < log.txt | grep -c ': ')
 bad=$(tr '\r' '\n' < log.txt | grep ': FEHLER' | grep -v '^REL NEU:')
