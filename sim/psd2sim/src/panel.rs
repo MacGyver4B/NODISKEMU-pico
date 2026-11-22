@@ -1,5 +1,5 @@
 //! Bedienfeld des petSD+ (Board petsd2_dip40) fuer psd2sim:
-//!   - LCD 20x4 (HD44780/WS0010) an GPIO 25/29/34/35 (DB4-DB7), 36 (RS), 37 (E)
+//!   - LCD 20x4 (HD44780U ROM-Code A02 / WS0010) an GPIO 25/29/34/35 (DB4-DB7), 36 (RS), 37 (E)
 //!   - Tasten PREV/NEXT/SEL als Widerstandsleiter an ADC7 (GPIO 47) hinter
 //!     dem Teiler 56k/100k
 //!   - I2C1: ATtiny25 (0x26, PWM Kontrast/Helligkeit, IO_IEC) und DS3231 (0x68)
@@ -131,10 +131,11 @@ impl Lcd {
     pub fn text(&self) -> String {
         (0..4).map(|y| {
             self.line(y).iter().map(|&c| match c {
-                0..=7 => '\u{2592}',
-                0x20..=0x7d => c as char,
-                0x7e => '\u{2192}',
-                0x7f => '\u{2190}',
+                // ROM-Code A02: unten ASCII (0x7F = Haus), oben weitgehend Latin-1
+                0..=15 => '\u{2592}',
+                0x20..=0x7e => c as char,
+                0x7f => '\u{2302}',
+                0xa0..=0xff => c as char,
                 _ => '?',
             }).collect::<String>()
         }).collect::<Vec<_>>().join("\n")
