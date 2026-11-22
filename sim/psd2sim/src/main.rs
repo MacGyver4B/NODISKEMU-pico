@@ -18,6 +18,8 @@
 //!   Kartenschalter/Schreibschutz an GPIO 2/3, dazu das Bedienfeld (LCD,
 //!   Tasten, ATtiny25, DS3231, panel.rs) mit Webseite auf -w Port (8488).
 //!   -k PREV|NEXT|SEL haelt Tasten ab dem Start (z. B. PREV = Diagnose).
+//!   -r A00|A02 waehlt den Zeichensatz des LCD (Vorgabe A00, passend zu
+//!   CONFIG_LCD_ROM_A02 der Firmware).
 //!
 //! Fehlersuche: PSD2_SOLO=ms (ohne Bus), PSD2_PEEK=adr,... (Speicherworte am
 //! Ende von PSD2_SOLO), PSD2_MMIO=1 (MMIO-Spur von picoem auf stdout),
@@ -365,6 +367,11 @@ fn main() {
                 http = Some(args[i + 1].parse().expect("-w Port"));
                 args.drain(i..i + 2);
             }
+            "-r" => {
+                // Zeichensatz des LCD: A00 (Vorgabe) oder A02, wie CONFIG_LCD_ROM_A02
+                std::env::set_var("PSD2_LCDROM", &args[i + 1]);
+                args.drain(i..i + 2);
+            }
             "-k" => {
                 hold = args[i + 1].clone();
                 args.drain(i..i + 2);
@@ -377,7 +384,7 @@ fn main() {
         }
     }
     if args.len() != 2 && args.len() != 3 {
-        eprintln!("usage: psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] [-b dip40 [-w port] [-k tasten]] firmware.bin ieeebus [iecbus]");
+        eprintln!("usage: psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] [-b dip40 [-w port] [-k tasten] [-r A00|A02]] firmware.bin ieeebus [iecbus]");
         std::process::exit(1);
     }
     let fw = std::fs::read(&args[0]).expect("Firmware");

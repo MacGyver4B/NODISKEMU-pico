@@ -27,3 +27,6 @@ CONFIG_IEC_RELAY=y
 CONFIG_ONBOARD_DISPLAY=y
 CONFIG_RTC_DSRTC=y
 CONFIG_HW_ADDR_OR_BUTTONS=y
+# Zeichensatz des LCD-Moduls: ROM-Code A00 (Vorgabe, japanisch) oder A02
+# (europaeisch); fuer psd2sim passend -r A02 angeben
+#CONFIG_LCD_ROM_A02=y

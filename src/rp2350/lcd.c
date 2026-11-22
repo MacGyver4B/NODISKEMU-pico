@@ -97,8 +97,18 @@ void lcd_home(void) {
   lcd_locate(0, 0);
 }
 
-#ifdef CONFIG_MULTIDRIVE
-/* Tilde als Zeichen 0 im CGRAM (das HD44780 zeigt sonst einen Pfeil) */
+/* Zeichensatz des Moduls: ROM-Code A00 (Vorgabe, japanisch: 0x7E = Pfeil,
+   0xFF = Kaestchen) oder A02 (CONFIG_LCD_ROM_A02, europaeisch: 0x7E = Tilde,
+   0xFF = y mit Trema). Was der Zeichensatz nicht hat, kommt aus dem CGRAM. */
+#if defined(CONFIG_MULTIDRIVE) && !defined(CONFIG_LCD_ROM_A02)
+#  define LCD_CGRAM_TILDE
+#endif
+#ifdef CONFIG_LCD_ROM_A02
+#  define LCD_CGRAM_BLOCK
+#endif
+
+#ifdef LCD_CGRAM_TILDE
+/* Tilde als Zeichen 0 im CGRAM (A00 zeigt sonst einen Pfeil) */
 #define LCD_CHAR_TILDE 0
 
 static const uint8_t lcd_tilde[8] = {
@@ -116,11 +126,10 @@ static void lcd_define_tilde(void) {
 }
 #endif
 
+#ifdef LCD_CGRAM_BLOCK
 /* Volles Kaestchen als Zeichen 1 im CGRAM: Das Menue zeichnet Balken
-   (Kontrast, Helligkeit) mit 0xFF. Das ist nur beim ROM-Code A00 ein
-   Kaestchen, beim A02 ("European standard font") ein y mit Trema. Ueber das
-   CGRAM sieht der Balken bei beiden gleich aus. Wie die Tilde wird das
-   Zeichen beim ersten Gebrauch geladen und nach dem Startlogo erneut. */
+   (Kontrast, Helligkeit) mit 0xFF, beim A02 waere das ein y mit Trema.
+   Wie die Tilde beim ersten Gebrauch geladen und nach dem Startlogo erneut. */
 #define LCD_CHAR_BLOCK 1
 static bool lcd_block_loaded;
 
@@ -131,13 +140,16 @@ static void lcd_define_block(void) {
     lcd_write(0x1f);
   lcd_block_loaded = true;
 }
+#endif
 
 void lcd_load_custom_chars_P(const uint8_t *glyphs) {
   uint8_t x = lcd_x, y = lcd_y;
-#ifdef CONFIG_MULTIDRIVE
+#ifdef LCD_CGRAM_TILDE
   lcd_tilde_loaded = false;
 #endif
+#ifdef LCD_CGRAM_BLOCK
   lcd_block_loaded = false;
+#endif
   lcd_send_command(0x40);
   lcd_set_data_mode();
   for (uint8_t i = 0; i < 64; i++)
@@ -204,19 +216,23 @@ void lcd_putc(char c) {
     lcd_x = 0;
     lcd_y++;
   }
-#ifdef CONFIG_MULTIDRIVE
+#ifdef LCD_CGRAM_TILDE
   if (c == '~' && !lcd_tilde_loaded)
     lcd_define_tilde();
 #endif
+#ifdef LCD_CGRAM_BLOCK
   if ((uint8_t)c == 0xFF && !lcd_block_loaded)
     lcd_define_block();
+#endif
   lcd_locate(lcd_x, lcd_y);
   if ((uint8_t)c < 8 || (uint8_t)c >= ' ') {
     lcd_set_data_mode();
-#ifdef CONFIG_MULTIDRIVE
+#ifdef LCD_CGRAM_TILDE
     if (c == '~') c = LCD_CHAR_TILDE;
 #endif
+#ifdef LCD_CGRAM_BLOCK
     if ((uint8_t)c == 0xFF) c = LCD_CHAR_BLOCK;
+#endif
     lcd_write(c);
     lcd_x++;
   }

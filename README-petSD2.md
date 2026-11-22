@@ -78,6 +78,10 @@ lässt sich in der Konfiguration abschalten (`CONFIG_ONBOARD_DISPLAY`,
 Die Tastenschwellen sind die des AVR: Der 12-Bit-Wert hinter dem Teiler wird auf
 die 10-Bit-Skala des AVR (Referenz 5 V) umgerechnet.
 
+Zeichensatz des LCD-Moduls: ROM-Code A00 (Vorgabe) oder A02 mit
+`CONFIG_LCD_ROM_A02=y`; was dem Modul fehlt (Tilde bei A00, Kästchen für die
+Menübalken bei A02), legt die Firmware ins CGRAM.
+
 Offen: Einstellungen aus dem Menü gehen beim Neustart verloren (das EEPROM liegt
 noch im RAM, siehe `src/rp2350/arch-eeprom.h`). Die Tastenmessung ist nicht mehr ratiometrisch
 (ADC gegen 3,3 V statt gegen die 5 V der Leiter); die Fenster des AVR vertragen nur
@@ -127,7 +131,8 @@ auf einer Webseite (`-w port`, Vorgabe 8488): `http://localhost:8488/`. Tasten p
 Maus, Pfeil links/rechts/Eingabe oder Skript
 (`curl -X POST 'localhost:8488/key?k=SEL&ms=200'`, `&down=1`/`&down=0` zum Halten),
 die Anzeige als Text unter `/text`. `-k PREV` hält Tasten ab dem Start (Hardwaretest),
-`PSD2_LCDDUMP=1` schreibt jede Änderung der Anzeige ins Protokoll, `PSD2_TZ` setzt
+`-r A02` zeigt den europäischen Zeichensatz (Vorgabe A00, passend zu
+`CONFIG_LCD_ROM_A02` der Firmware), `PSD2_LCDDUMP=1` schreibt jede Änderung der Anzeige ins Protokoll, `PSD2_TZ` setzt
 die Zeitzone der Uhr (Stunden, Vorgabe 1). Weil das Startbild 5 s steht, braucht
 xpet für die Tests eine Tastaturverzögerung:
 

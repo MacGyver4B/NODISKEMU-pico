@@ -1,5 +1,5 @@
 //! Bedienfeld des petSD+ (Board petsd2_dip40) fuer psd2sim:
-//!   - LCD 20x4 (HD44780U ROM-Code A02 / WS0010) an GPIO 25/29/34/35 (DB4-DB7), 36 (RS), 37 (E)
+//!   - LCD 20x4 (HD44780U ROM-Code A00, mit PSD2_LCDROM=A02 der europaeische / WS0010) an GPIO 25/29/34/35 (DB4-DB7), 36 (RS), 37 (E)
 //!   - Tasten PREV/NEXT/SEL als Widerstandsleiter an ADC7 (GPIO 47) hinter
 //!     dem Teiler 56k/100k
 //!   - I2C1: ATtiny25 (0x26, PWM Kontrast/Helligkeit, IO_IEC) und DS3231 (0x68)
@@ -36,6 +36,8 @@ pub struct Lcd {
     pub on: bool,
     pub cursor: bool,
     pub writes: u64,
+    /// ROM-Code des Zeichensatzes: false = A00 (Vorgabe), true = A02
+    pub a02: bool,
 }
 
 impl Lcd {
@@ -43,6 +45,7 @@ impl Lcd {
         Lcd {
             ddram: [b' '; 128], cgram: [0; 64], four_bit: false, high: None, addr: 0,
             to_cg: false, inc: true, on: false, cursor: false, writes: 0,
+            a02: std::env::var("PSD2_LCDROM").map(|v| v.eq_ignore_ascii_case("A02")).unwrap_or(false),
         }
     }
 
@@ -131,11 +134,16 @@ impl Lcd {
     pub fn text(&self) -> String {
         (0..4).map(|y| {
             self.line(y).iter().map(|&c| match c {
-                // ROM-Code A02: unten ASCII (0x7F = Haus), oben weitgehend Latin-1
                 0..=15 => '\u{2592}',
+                // A00: Yen statt Backslash, Pfeile statt Tilde/DEL, oben Katakana
+                0x5c if !self.a02 => '\u{a5}',
+                0x7e if !self.a02 => '\u{2192}',
+                0x7f if !self.a02 => '\u{2190}',
+                0xff if !self.a02 => '\u{2588}',
+                // A02: unten ASCII (0x7F = Haus), oben weitgehend Latin-1
                 0x20..=0x7e => c as char,
                 0x7f => '\u{2302}',
-                0xa0..=0xff => c as char,
+                0xa0..=0xff if self.a02 => c as char,
                 _ => '?',
             }).collect::<String>()
         }).collect::<Vec<_>>().join("\n")
@@ -438,7 +446,8 @@ fn state_json(s: &Shared) -> String {
         lines.push(format!("[{}]", l.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")));
     }
     format!(
-        "{{\"lines\":[{}],\"cgram\":[{}],\"cursor\":{},\"on\":{},\"keys\":{},\"contrast\":{},\"brightness\":{},\"io_iec\":{},\"ms\":{:.0},\"text\":\"{}\"}}",
+        "{{\"rom\":\"{}\",\"lines\":[{}],\"cgram\":[{}],\"cursor\":{},\"on\":{},\"keys\":{},\"contrast\":{},\"brightness\":{},\"io_iec\":{},\"ms\":{:.0},\"text\":\"{}\"}}",
+        if s.lcd.a02 { "A02" } else { "A00" },
         lines.join(","),
         s.lcd.cgram.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","),
         s.lcd.cursor_pos().map(|(y, x)| format!("[{},{}]", y, x)).unwrap_or_else(|| "null".into()),
