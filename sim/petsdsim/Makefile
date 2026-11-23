@@ -5,6 +5,8 @@
 #   make SIMAVR=system        mit dem simavr der Distribution (pkg-config)
 #   make SIMLINK_DIR=...      simlink aus VICE-LRE-SIMLINK (src/simlink)
 #
+# Windows: in der MSYS2-Shell MINGW64 genauso (make CC=gcc), Pakete
+#   mingw-w64-x86_64-{toolchain,libelf,avr-toolchain,rust,pkgconf} und make.
 # Voraussetzungen:
 #   - simavr-Quellen: git submodule update --init sim/simavr
 #     (zum Bauen braucht simavr die avr-libc-Header, also die AVR-Toolchain:
@@ -49,9 +51,15 @@ endif
 ifeq ($(UNAME),Darwin)
   LIBS += -framework CoreFoundation -framework Security
 endif
+# Windows (MSYS2 MINGW64): statisch, damit petsdsim.exe ohne DLLs laeuft;
+# dazu die Systembibliotheken, die die Rust-Bibliothek psdpanel braucht
+ifneq ($(filter MINGW% MSYS%,$(UNAME)),)
+  LIBS += -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32 -lkernel32 -ldbghelp -lsynchronization
+  LDFLAGS += -static
+endif
 
 petsdsim: petsdsim.c buscap.c buscap.h $(SIMLINK_DIR)/simlink.c $(PANEL) $(SIMAVR_LIB)
-	$(CC) $(CFLAGS) -o $@ petsdsim.c buscap.c $(SIMLINK_DIR)/simlink.c $(LIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ petsdsim.c buscap.c $(SIMLINK_DIR)/simlink.c $(LIBS)
 
 # simavr seriell bauen: parallel faellt die Kern-Konfiguration aus der Reihe
 $(SIMAVR_OBJ)/libsimavr.a:

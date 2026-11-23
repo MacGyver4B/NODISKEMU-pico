@@ -85,9 +85,26 @@ need the AVR toolchain and libelf: Debian/Ubuntu/Raspberry Pi OS
 `apt install gcc-avr avr-libc libelf-dev`; macOS `brew tap osx-cross/avr &&
 brew install avr-gcc libelf`. `make SIMAVR=system` uses the simavr of your
 distribution instead (Debian/Ubuntu ship 1.6, `libsimavr-dev`); petsdsim
-works around the known 1.6 bugs, but 1.8 is preferred. On Windows simavr is
-not available natively — use WSL (Ubuntu) for the whole setup; with WSLg the
-xpet window and the browser work as usual.
+works around the known 1.6 bugs, but 1.8 is preferred.
+
+### Windows
+
+No WSL needed. The GitHub workflow "sim - Windows build" (Actions tab of
+this repo, started by hand) builds `petsdsim.exe`, `psd2sim.exe` and the
+petSD+ firmware with MSYS2 and packs them with the launcher into the
+artifact `petsd-sim-windows`. xpet comes from the workflow "simlink -
+Windows GTK3 build" of VICE-LRE-SIMLINK: unpack it into a folder `vice` next
+to `petsd-sim.py` (so that `vice\bin\xpet.exe` exists) or pass `--xpet`.
+Then, with Python 3 for Windows:
+
+```
+py petsd-sim.py --new-sd card.img
+py petsd-sim.py --avr  --sd card.img      petSD+ (firmware included)
+py petsd-sim.py --pico --sd card.img      petSD2 (firmware included)
+```
+
+To build it yourself: MSYS2 shell MINGW64 with the packages listed in the
+workflow file, then the same `make CC=gcc` / `cargo build --release` steps.
 
 The petSD2 firmware is prebuilt in `firmware/`. To build it yourself you need
 the Pico SDK: `cmake -S pico -B pico/build-emu -DPSD2_EMU=1
@@ -137,7 +154,7 @@ nanoseconds. Examples are in `petsdsim/examples/`.
 ## Status and limits
 
 - Tested on Linux (Ubuntu) and by Torsten (tuti) on a Raspberry Pi 5
-  (Debian 12). macOS and Windows/WSL are expected to work but have not been
+  (Debian 12). macOS and the native Windows build are expected to work but have not been
   tried yet — please report what happens.
 - Wayland: if the PET window stays black, start with `GDK_BACKEND=x11`.
 - `petsdsim -l us` (lookahead, default 2 µs) delays every reaction of the

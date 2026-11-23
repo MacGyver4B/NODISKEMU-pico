@@ -1,0 +1,139 @@
+name: sim - Windows build
+
+# Simulation fuer Windows ohne WSL: petsdsim.exe (petSD+, simavr 1.8),
+# psd2sim.exe (petSD2, picoem), dazu die petSD+-Firmware (AVR) und das
+# Startskript. xpet kommt aus VICE-LRE-SIMLINK ("simlink - Windows GTK3 build").
+# Nur von Hand starten.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Windows x64 (MSYS2 MINGW64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - run: git config --global core.autocrlf input
+        shell: bash
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: simavr-Quellen (Submodule)
+        shell: bash
+        run: git submodule update --init sim/simavr
+
+      - name: simlink aus VICE-LRE-SIMLINK
+        uses: actions/checkout@v4
+        with:
+          repository: MacGyver4B/VICE-LRE-SIMLINK
+          ref: simlink
+          path: vice-lre-simlink
+          sparse-checkout: vice/src/simlink
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            zip
+            perl
+            gawk
+            git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-libelf
+            mingw-w64-x86_64-avr-toolchain
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-pkgconf
+
+      - name: Werkzeuge
+        run: |
+          gcc --version | head -1
+          avr-gcc --version | head -1
+          cargo --version
+          pkg-config --cflags --libs libelf || echo "libelf: kein pkg-config-Eintrag"
+          echo "SL=$(cygpath -m "$GITHUB_WORKSPACE/vice-lre-simlink/vice/src/simlink")" >> $GITHUB_ENV
+
+      - name: simavr 1.8
+        run: |
+          make -j1 -C sim/simavr/simavr CC=gcc libsimavr
+          # ohne libelf laedt simavr keine ELF-Dateien; das zeigt der Probelauf
+          ls -l sim/simavr/simavr/obj-*/libsimavr.a
+
+      - name: psdpanel (Bedienfeld)
+        run: |
+          cd sim/psdpanel
+          cargo build --release
+          cargo rustc --release --lib --crate-type staticlib -- --print native-static-libs 2>&1 | grep -i native || true
+
+      - name: petsdsim
+        run: |
+          cd sim/petsdsim
+          make CC=gcc SIMLINK_DIR="$SL"
+          ldd petsdsim.exe | grep -vi windows || true
+
+      - name: psd2sim
+        run: |
+          cd sim/psd2sim
+          SIMLINK_DIR="$SL" cargo build --release
+          ldd target/release/psd2sim.exe | grep -vi windows || true
+
+      - name: petSD+-Firmware (AVR)
+        run: |
+          make CONFIG=configs/config-petSD+
+          ls -l obj-m1284p-petSD+/NODISKEMU.elf
+
+      - name: Probelauf petSD+ (Statusbild auf dem LCD)
+        run: |
+          gzip -dc sim/sd-empty.img.gz > card.img
+          PSD2_LCDDUMP=1 PSD_RTC_START=1795370400 \
+            sim/petsdsim/petsdsim.exe -p -t 9000 obj-m1284p-petSD+/NODISKEMU.elf card.img - 2> avr.log || true
+          tail -n 20 avr.log
+          grep -q "NODISKEMU" avr.log
+
+      - name: Probelauf petSD2 (Statusbild auf dem LCD)
+        run: |
+          gzip -dc sim/sd-empty.img.gz > card2.img
+          PSD2_LCDDUMP=1 PSD_RTC_START=1795370400 PSD2_SOLO=9000 \
+            sim/psd2sim/target/release/psd2sim.exe -b dip40 -s card2.img sim/firmware/petsd2-dip40-emu.bin x 2> pico.log || true
+          tail -n 20 pico.log
+          grep -q "NODISKEMU" pico.log
+
+      - name: Paket
+        run: |
+          P=petsd-sim-windows
+          mkdir -p $P/firmware $P/examples
+          cp sim/petsd-sim.py sim/sd-empty.img.gz sim/README.md $P/
+          cp sim/petsdsim/petsdsim.exe sim/psd2sim/target/release/psd2sim.exe $P/
+          cp sim/firmware/petsd2-dip40-emu.bin $P/firmware/
+          cp obj-m1284p-petSD+/NODISKEMU.elf "$P/firmware/NODISKEMU-petSD+.elf"
+          cp sim/petsdsim/examples/*.vcd $P/examples/
+          # DLLs, die nicht von Windows selbst kommen, mitgeben
+          for f in $P/*.exe; do
+            ldd "$f" | awk '/mingw64/ {print $3}' | xargs -r -I{} cp -n {} $P/
+          done
+          cat > $P/LIESMICH.txt <<'EOF'
+          petSD+ / petSD2 simulation for Windows (built by GitHub Actions)
+
+          Needs: Python 3 for Windows, and xpet with simlink from
+          VICE-LRE-SIMLINK (workflow "simlink - Windows GTK3 build").
+          Unpack that build into a folder "vice" next to this file
+          (so that vice\bin\xpet.exe exists), or pass --xpet path\to\xpet.exe.
+
+            py petsd-sim.py --new-sd card.img
+            py petsd-sim.py --avr  --sd card.img     petSD+ (included firmware)
+            py petsd-sim.py --pico --sd card.img     petSD2 (included firmware)
+
+          Details: README.md
+          EOF
+          ls -l $P
+          echo "PKG=$P" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: petsd-sim-windows
+          path: ${{ env.PKG }}

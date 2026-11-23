@@ -3,7 +3,7 @@
 together with a PET in VICE (xpet), with the front panel (LCD, buttons) in
 the web browser.
 
-  petsd-sim.py --avr NODISKEMU.elf --sd card.img        original petSD+
+  petsd-sim.py --avr [NODISKEMU.elf] --sd card.img      original petSD+
   petsd-sim.py --pico [petsd2.bin] --sd card.img        petSD2 (Pico 2)
   petsd-sim.py --new-sd card.img                        create an empty card
 
@@ -11,8 +11,8 @@ Both drives start as device 11 (fresh EEPROM, as delivered). Settings
 saved in the menu or with U0>... persist in an EEPROM file next to the
 card image (card.eep). The panel is at http://localhost:8488/.
 
-Runs on Linux, macOS and Windows (the AVR simulator needs simavr, i.e.
-Linux, macOS or WSL). Paths to the programs can be given with --xpet,
+Runs on Linux, macOS and Windows (native build from the GitHub workflow
+"sim - Windows build", see README). Paths to the programs can be given with --xpet,
 --petsdsim and --psd2sim or the environment variables XPET, PETSDSIM and
 PSD2SIM.
 """
@@ -57,7 +57,8 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group()
-    g.add_argument('--avr', metavar='ELF', help='petSD+ firmware (NODISKEMU .elf for ATmega1284P)')
+    g.add_argument('--avr', metavar='ELF', nargs='?', const='',
+                   help='petSD+ firmware (NODISKEMU .elf for ATmega1284P; default: firmware/NODISKEMU-petSD+.elf if present)')
     g.add_argument('--pico', metavar='BIN', nargs='?', const='',
                    help='petSD2 firmware built with -DPSD2_EMU=1 (default: firmware/petsd2-dip40-emu.bin)')
     ap.add_argument('--sd', metavar='IMG', help='SD card image (MBR + FAT)')
@@ -83,22 +84,28 @@ def main():
         ap.error('--sd IMG is required (create one with --new-sd IMG)')
     eep = a.eeprom or os.path.splitext(a.sd)[0] + '.eep'
 
-    xpet = a.xpet or find('xpet', 'XPET', [os.path.join(HERE, 'vice-lre-simlink', 'vice', 'src', 'xpet')])
+    xpet = a.xpet or find('xpet', 'XPET', [os.path.join(HERE, 'vice-lre-simlink', 'vice', 'src', 'xpet'),
+                                           os.path.join(HERE, 'vice', 'bin', 'xpet')])
     if not xpet:
         sys.exit('xpet not found (build VICE-LRE-SIMLINK, then use --xpet or XPET=...)')
 
     if a.avr is not None:
-        emu = a.petsdsim or find('petsdsim', 'PETSDSIM', [os.path.join(HERE, 'petsdsim', 'petsdsim')])
+        emu = a.petsdsim or find('petsdsim', 'PETSDSIM', [os.path.join(HERE, 'petsdsim', 'petsdsim'),
+                                                          os.path.join(HERE, 'petsdsim')])
         if not emu:
-            sys.exit('petsdsim not found (cd sim/petsdsim && make; on Windows use WSL)')
+            sys.exit('petsdsim not found (cd sim/petsdsim && make; Windows: see README)')
         cmd = [emu, '-w', str(a.port), '-e', eep]
         if a.vcd:
             os.makedirs(a.vcd, exist_ok=True)
             cmd += ['-g', a.vcd]
-        cmd += [a.avr, a.sd, a.bus]
+        elf = a.avr or os.path.join(HERE, 'firmware', 'NODISKEMU-petSD+.elf')
+        if not os.path.isfile(elf):
+            sys.exit(f'{elf} not found (build NODISKEMU: make CONFIG=configs/config-petSD+, then --avr obj-m1284p-petSD+/NODISKEMU.elf)')
+        cmd += [elf, a.sd, a.bus]
     else:
         fw = a.pico or os.path.join(HERE, 'firmware', 'petsd2-dip40-emu.bin')
-        emu = a.psd2sim or find('psd2sim', 'PSD2SIM', [os.path.join(HERE, 'psd2sim', 'target', 'release', 'psd2sim')])
+        emu = a.psd2sim or find('psd2sim', 'PSD2SIM', [os.path.join(HERE, 'psd2sim', 'target', 'release', 'psd2sim'),
+                                                        os.path.join(HERE, 'psd2sim')])
         if not emu:
             sys.exit('psd2sim not found (cd sim/psd2sim && cargo build --release)')
         os.environ['PSD_EEPROM'] = '24c32'          # EEPROM on the adapter pad
