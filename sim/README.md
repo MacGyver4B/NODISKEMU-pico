@@ -103,7 +103,7 @@ py petsd-sim.py --avr  --sd card.img      petSD+ (firmware included)
 py petsd-sim.py --pico --sd card.img      petSD2 (firmware included)
 ```
 
-To build it yourself: MSYS2 shell MINGW64 with the packages listed in the
+To build it yourself: MSYS2 shell UCRT64 with the packages listed in the
 workflow file, then the same `make CC=gcc` / `cargo build --release` steps.
 
 The petSD2 firmware is prebuilt in `firmware/`. To build it yourself you need

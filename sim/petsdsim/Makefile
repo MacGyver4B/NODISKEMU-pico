@@ -5,8 +5,8 @@
 #   make SIMAVR=system        mit dem simavr der Distribution (pkg-config)
 #   make SIMLINK_DIR=...      simlink aus VICE-LRE-SIMLINK (src/simlink)
 #
-# Windows: in der MSYS2-Shell MINGW64 genauso (make CC=gcc), Pakete
-#   mingw-w64-x86_64-{toolchain,libelf,avr-toolchain,rust,pkgconf} und make.
+# Windows: in der MSYS2-Shell UCRT64 genauso (make CC=gcc), Pakete
+#   mingw-w64-ucrt-x86_64-{toolchain,libelf,avr-gcc,avr-binutils,avr-libc,rust,pkgconf}, make.
 # Voraussetzungen:
 #   - simavr-Quellen: git submodule update --init sim/simavr
 #     (zum Bauen braucht simavr die avr-libc-Header, also die AVR-Toolchain:
