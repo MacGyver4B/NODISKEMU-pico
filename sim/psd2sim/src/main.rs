@@ -213,6 +213,7 @@ struct Bus {
     ext_pull: u8,           // andere Teilnehmer (bereits angewandt)
     ext_data: u8,
     last_ext: u64,          // Buszeit der letzten ausgewerteten Aenderung
+    warn_peek: u64,         // Zaehler: Zustand nur an der Fortschrittsgrenze gesehen
     pend: std::collections::VecDeque<(u64, u8, u8)>,   // (Emulatorzeit, pull, data)
 }
 
@@ -556,7 +557,7 @@ fn main() {
         }
         br.bus.push(Bus {
             sl, slot, iec, off: 0, pub_pull: 0, pub_data: 0, pub_valid: false,
-            ext_pull: 0, ext_data: 0, last_ext: 0, pend: Default::default(),
+            ext_pull: 0, ext_data: 0, last_ext: 0, warn_peek: 0, pend: Default::default(),
         });
     }
     eprintln!("psd2sim: {} ({} Bytes) an {}", args[0], fw.len(), args[1..].join(" + "));
@@ -601,8 +602,14 @@ fn main() {
             if m == u64::MAX {
                 continue;   // Gegenseite gibt keine Grenze vor
             }
-            if (m.saturating_sub(2) + look).saturating_sub(b.off) <= done {
-                m = unsafe { simlink_wait_peers(b.sl, b.slot, (done + b.off + 1).saturating_sub(look)) };
+            // Weiter, wenn m - 2 + look ueber done liegt (ohne Ueberlauf
+            // gerechnet). Direkt nach dem Anmelden meldet VICE Fortschritt 0
+            // oder 1: von dort ist noch nichts endgueltig, die Vorausschau gilt
+            // aber schon. Frueher lief m - 2 dabei ueber, last_ext stand danach
+            // dauerhaft auf dem Hoechstwert und der PET war nur noch an den
+            // Fortschrittsgrenzen sichtbar (Zwischenzustaende fehlten).
+            if m + look <= done + b.off + 2 {
+                m = unsafe { simlink_wait_peers(b.sl, b.slot, done + b.off + 2 - look) };
                 if unsafe { simlink_others(b.sl, b.slot) } == 0 {
                     eprintln!("psd2sim: Gegenseite beendet");
                     break 'main;
@@ -610,6 +617,13 @@ fn main() {
                 if m == u64::MAX {
                     continue;
                 }
+            }
+            if m < 2 {
+                let tg = (m + look - 2).saturating_sub(b.off);
+                if tg < target {
+                    target = tg;
+                }
+                continue;
             }
             let upto = m - 2;
             let mut tc: u64 = 0;
@@ -624,6 +638,11 @@ fn main() {
                 let l = unsafe { simlink_peek_others(b.sl, b.slot, upto, &mut d) };
                 let (ql, qd) = b.pend.back().map(|e| (e.1, e.2)).unwrap_or((b.ext_pull, b.ext_data));
                 if l != ql || d != qd {
+                    b.warn_peek += 1;
+                    if b.warn_peek <= 10 || b.warn_peek % 1000 == 0 {
+                        eprintln!("psd2sim: WARNUNG ({}) Zustand an der Grenze {:.6} ms nur nachtraeglich gesehen ({:02x}/{:02x}, zuletzt {:02x}/{:02x})",
+                                  b.warn_peek, upto as f64 / 1e9, l, d, ql, qd);
+                    }
                     b.pend.push_back((upto - b.off + look, l, d));
                 }
                 if upto > b.last_ext {

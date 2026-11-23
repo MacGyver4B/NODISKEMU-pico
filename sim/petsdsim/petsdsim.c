@@ -726,6 +726,7 @@ static void uart_out(struct avr_irq_t *irq, uint32_t value, void *param)
 /* ------------------------------ Hauptteil ----------------------------- */
 
 static double cap_idle = 0;
+static unsigned long warn_late, warn_peek, warn_full;
 static const char *cap_dir;
 
 int main(int argc, char **argv)
@@ -899,9 +900,15 @@ usage:
             fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
             break;
         }
-        if (m == UINT64_MAX || m - 2 + look <= done) {
+        /* Weiter, wenn m - 2 + look ueber done liegt (ohne Unterlauf
+           gerechnet). Direkt nach dem Anmelden meldet VICE Fortschritt 0 oder
+           1; dann ist von dort noch nichts endgueltig (kein upto), die
+           Vorausschau gilt aber schon. Frueher lief m - 2 dabei ueber, und
+           last_ext stand danach dauerhaft auf dem Hoechstwert: petsdsim sah den
+           PET nur noch an den Fortschrittsgrenzen, Zwischenzustaende fehlten. */
+        if (m == UINT64_MAX || m + look <= done + 2) {
             /* Vorausschau aufgebraucht: auf die anderen warten */
-            m = m == UINT64_MAX ? m : simlink_wait_peers(sl, slot, done + 1 - look);
+            m = m == UINT64_MAX ? m : simlink_wait_peers(sl, slot, done + 2 - look);
             if (simlink_others(sl, slot) == 0) {
                 fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
                 break;
@@ -910,6 +917,10 @@ usage:
                 usleep(1000);       /* Gegenseite noch nicht aktiv */
                 continue;
             }
+        }
+        if (m < 2) {
+            target = m + look - 2;
+            goto run;
         }
         /* VICE meldet Fortschritt done+1, stempelt eine spaetere Aenderung
            des PET aber noch mit done (parallel-simlink.c, publish); daher
@@ -921,11 +932,25 @@ usage:
             pend_l[pend_n] = simlink_peek_others(sl, slot, tc, &d);
             pend_d[pend_n] = d;
             pend_t[pend_n] = tc + look;
+            /* bis zu einem AVR-Befehl ueber das Ziel hinaus ist unvermeidlich */
+            if (pend_t[pend_n] + 1000000 < now_ps()) {
+                warn_late++;
+                if (warn_late <= 10 || warn_late % 1000 == 0) {
+                    fprintf(stderr, "petsdsim: WARNUNG (%lu) Aenderung bei %.6f ms kommt erst bei %.6f ms an\n",
+                            warn_late, tc / 1e9, now_ps() / 1e9);
+                }
+            }
             if (verbose > 2) {
                 fprintf(stderr, "petsdsim: Aenderung bei %.3f ms: %02x/%02x\n", tc / 1e9, pend_l[pend_n], d);
             }
             pend_n++;
             last_ext = tc;
+        }
+        if (pend_n == 64) {
+            warn_full++;
+            if (warn_full <= 10 || warn_full % 1000 == 0) {
+                fprintf(stderr, "petsdsim: WARNUNG (%lu) Warteschlange voll bei %.6f ms\n", warn_full, now_ps() / 1e9);
+            }
         }
         if (pend_n < 64) {
             /* Ein Eintrag genau bei der gemeldeten Fortschrittsgrenze kann
@@ -935,6 +960,11 @@ usage:
             uint8_t ql = pend_n ? pend_l[pend_n - 1] : ext_pull;
             uint8_t qd = pend_n ? pend_d[pend_n - 1] : ext_data;
             if (l != ql || d != qd) {
+                warn_peek++;
+                if (warn_peek <= 10 || warn_peek % 1000 == 0) {
+                    fprintf(stderr, "petsdsim: WARNUNG (%lu) Zustand an der Grenze %.6f ms nur nachtraeglich gesehen (%02x/%02x, zuletzt %02x/%02x, n=%d, last_ext %.6f, m %.6f)\n",
+                            warn_peek, upto / 1e9, l, d, ql, qd, pend_n, last_ext / 1e9, m / 1e9);
+                }
                 pend_l[pend_n] = l;
                 pend_d[pend_n] = d;
                 pend_t[pend_n] = upto + look;
@@ -943,6 +973,7 @@ usage:
             last_ext = upto > last_ext ? upto : last_ext;
         }
         target = upto + look;
+    run:
         while (now_ps() < target && !stop) {
             while (pend_n && pend_t[0] <= now_ps()) {
                 apply_ext(pend_l[0], pend_d[0]);

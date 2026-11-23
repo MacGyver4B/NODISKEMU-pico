@@ -21,6 +21,7 @@ import gzip
 import os
 import platform
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,9 @@ def new_sd(path):
 
 
 def main():
+    # SIGTERM (timeout, kill) als normales Ende behandeln, damit finally das
+    # Laufwerk mit beendet und kein Prozess verwaist
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group()
     g.add_argument('--avr', metavar='ELF', help='petSD+ firmware (NODISKEMU .elf for ATmega1284P)')
