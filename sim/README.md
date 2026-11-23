@@ -6,7 +6,7 @@ front panel (20×4 LCD, PREV/NEXT/SELECT buttons) in your web browser:
 
 | Drive | Firmware | Simulator |
 | --- | --- | --- |
-| petSD+ (original, ATmega1284P) | any NODISKEMU `.elf` for the petSD+, unchanged | `petsdsim` (simavr, cycle-exact at 8 MHz) |
+| petSD+ (original, ATmega1284P) | any NODISKEMU `.elf` for the petSD+, unchanged | `petsdsim` (simavr, cycle-exact at 16 MHz, 8 MHz in IEC mode, as on the board) |
 | petSD2 (RP2350 / Pico 2 on the DIP40 adapter) | `firmware/petsd2-dip40-emu.bin` (prebuilt) | `psd2sim` (picoem) |
 
 Both use the same front-panel model (`psdpanel`: HD44780 LCD, ATtiny25 for
@@ -31,9 +31,14 @@ EEPROM file next to the card (`mycard.eep`).
 Panel: click the buttons, or use ←/→/Enter on the page (PREV/NEXT/SELECT).
 Press SELECT for the menu, as on the real drive.
 
+The drive needs about 6 seconds after start until it answers (SD card and
+display initialisation, the logo); the PET is ready earlier. A command typed
+right away gives `?DEVICE NOT PRESENT`, just as on real hardware switched on
+together with the PET.
+
 Options: `--model 4032` (PET model, default 8032), `--port 8490`,
-`--no-browser`, `--eeprom file`, and anything after `--` goes to xpet, e.g.
-`-- -warp`.
+`--no-browser`, `--eeprom file`, `--vcd DIR` (bus captures, see below), and
+anything after `--` goes to xpet, e.g. `-- -warp`.
 
 ## Putting files on the card image
 
@@ -48,29 +53,39 @@ An image of a real card (`dd`, Win32 Disk Imager) works as well.
 
 ## Building
 
-You need: Python 3, Rust (`rustup`), a C compiler, and for the PET the VICE
+You need: Python 3, Rust (`rustup`), a C compiler, for the petSD+ the AVR
+toolchain (simavr is built from the bundled sources and needs the avr-libc
+headers), and for the PET the VICE
 fork **VICE-LRE-SIMLINK** (<https://github.com/MacGyver4B/VICE-LRE-SIMLINK>,
 branch `simlink`), which adds the `-ieeesimlink` bus. Clone it next to the
 simulators so the build finds `simlink.c` and `xpet`:
 
 ```
-git clone https://github.com/MacGyver4B/NODISKEMU-pico.git
+git clone --recursive https://github.com/MacGyver4B/NODISKEMU-pico.git
 cd NODISKEMU-pico/sim
 git clone -b simlink https://github.com/MacGyver4B/VICE-LRE-SIMLINK.git vice-lre-simlink
 ```
 
+(Cloned without `--recursive`? `git submodule update --init sim/simavr`.)
+
 Build xpet in `vice-lre-simlink/vice` as described in its README (the
 launcher finds `vice/src/xpet` there; an installed xpet from this fork in
-your PATH, or `--xpet path`, works too). Then:
+your PATH, or `--xpet path`, works too). Run the full `make` there: `make -C
+src xpet` alone misses `libsimlink.a`. On Debian/Raspberry Pi OS configure
+also needs `libevdev-dev`. Then:
 
 ```
 (cd psdpanel && cargo build --release)     # front panel, used by both
 (cd psd2sim  && cargo build --release)     # petSD2 simulator
-(cd petsdsim && make)                      # petSD+ simulator (needs simavr)
+(cd petsdsim && make)                      # petSD+ simulator, builds simavr 1.8 first
 ```
 
-simavr: Debian/Ubuntu `apt install libsimavr-dev libelf-dev`; macOS
-`brew tap osx-cross/avr && brew install simavr libelf`. On Windows simavr is
+petsdsim uses simavr 1.8 from the submodule `sim/simavr`. To build it you
+need the AVR toolchain and libelf: Debian/Ubuntu/Raspberry Pi OS
+`apt install gcc-avr avr-libc libelf-dev`; macOS `brew tap osx-cross/avr &&
+brew install avr-gcc libelf`. `make SIMAVR=system` uses the simavr of your
+distribution instead (Debian/Ubuntu ship 1.6, `libsimavr-dev`); petsdsim
+works around the known 1.6 bugs, but 1.8 is preferred. On Windows simavr is
 not available natively — use WSL (Ubuntu) for the whole setup; with WSLg the
 xpet window and the browser work as usual.
 
@@ -87,21 +102,47 @@ Both simulators can run without a PET, with a key sequence in simulated
 time, and log every LCD change:
 
 ```
-PSD2_LCDDUMP=1 PSD_KEYS="14000:SEL:300,15500:NEXT:200" PSD_RTC_START=1795370400 \
-  petsdsim/petsdsim -p -t 20000 NODISKEMU.elf card.img - 2> avr.log
+PSD2_LCDDUMP=1 PSD_KEYS="7000:SEL:300,8500:NEXT:200" PSD_RTC_START=1795370400 \
+  petsdsim/petsdsim -p -t 13000 NODISKEMU.elf card.img - 2> avr.log
 PSD2_LCDDUMP=1 PSD_KEYS="7000:SEL:300,8500:NEXT:200" PSD_RTC_START=1795370400 PSD2_SOLO=13000 \
   psd2sim/target/release/psd2sim -b dip40 -s card.img firmware/petsd2-dip40-emu.bin x 2> pico.log
 python3 psdpanel/tools/lcdcmp.py avr.log pico.log
 ```
 
-(`PSD_KEYS`: from ms, buttons, for ms. The AVR needs about 7 s longer to its
-status screen, hence the later start. `PSD_RTC_START` makes the clock
-reproducible.)
+(`PSD_KEYS`: from ms, buttons, for ms. Both reach their status screen after
+about 6.3 s. `PSD_RTC_START` makes the clock reproducible.)
+
+## Bus captures for GTKWave (petSD+)
+
+With `--vcd DIR` the petSD+ simulator writes one VCD file per bus transfer
+into DIR, to be opened with GTKWave (<https://gtkwave.sourceforge.net/>,
+also as a Windows build). A capture starts with the first ATN after a quiet
+bus (with 1 ms of history), ends right after a CLOSE, otherwise after 250 ms
+without a change (`petsdsim -G ms`). The file name tells what happened:
+
+```
+20261123-111040-793_d11_DIR.vcd           DIRECTORY / LOAD"$"
+20261123-111044-858_d11_CMD_i0.vcd        command channel 15
+20261123-111044-931_d11_LOAD_0_f07.seq.vcd
+20261123-111100-002_d11_TALK2.vcd         reading on without OPEN (GET#)
+```
+
+Signals: `pet.*` and `petsd.*` are what each side drives, `bus.*` the
+resulting level (electrical: 0 = pulled low), `petsd.TE` the 75160/75161
+direction, `petsd.SD_CS` the card select and `petsd.ATN_ISR` the ATN
+interrupt routine running. `bus.BYTE` shows every transferred byte decoded
+(`LISTEN_11`, `OPEN_15`, `49_'I'`, `30_'0'_EOI`, ...). Times are simulated
+nanoseconds. Examples are in `petsdsim/examples/`.
 
 ## Status and limits
 
-- Tested on Linux (Ubuntu). macOS and Windows/WSL are expected to work but
-  have not been tried yet — please report what happens.
+- Tested on Linux (Ubuntu) and by Torsten (tuti) on a Raspberry Pi 5
+  (Debian 12). macOS and Windows/WSL are expected to work but have not been
+  tried yet — please report what happens.
+- Wayland: if the PET window stays black, start with `GDK_BACKEND=x11`.
+- `petsdsim -l us` (lookahead, default 2 µs) delays every reaction of the
+  drive by that time. Much more than the default breaks the ATN handshake
+  (`-l 20` gives `?DEVICE NOT PRESENT`).
 - IEEE-488 only: the petSD+ IEC port (J4) is not simulated. The petSD2's
   IEC host (relay to serial drives) is, see `../README-petSD2.md`.
 - The card is always inserted and not write-protected.

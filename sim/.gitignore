@@ -1,0 +1,7 @@
+# lokale Klone und Build-Ausgaben
+vice-lre-simlink
+psd2sim/target/
+__pycache__/
+# EEPROM-Dateien der Simulation
+*.eep
+*.EEP

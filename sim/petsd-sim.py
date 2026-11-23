@@ -20,9 +20,11 @@ import argparse
 import gzip
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 
@@ -56,6 +58,7 @@ def main():
                    help='petSD2 firmware built with -DPSD2_EMU=1 (default: firmware/petsd2-dip40-emu.bin)')
     ap.add_argument('--sd', metavar='IMG', help='SD card image (MBR + FAT)')
     ap.add_argument('--new-sd', metavar='IMG', help='create an empty card image and exit')
+    ap.add_argument('--vcd', metavar='DIR', help='write a GTKWave VCD file per bus transfer into DIR (petSD+ only)')
     ap.add_argument('--eeprom', metavar='FILE', help='EEPROM file (default: card image with .eep)')
     ap.add_argument('--model', default='8032', help='PET model for xpet (default 8032)')
     ap.add_argument('--port', type=int, default=8488, help='front panel web port (default 8488)')
@@ -84,7 +87,11 @@ def main():
         emu = a.petsdsim or find('petsdsim', 'PETSDSIM', [os.path.join(HERE, 'petsdsim', 'petsdsim')])
         if not emu:
             sys.exit('petsdsim not found (cd sim/petsdsim && make; on Windows use WSL)')
-        cmd = [emu, '-w', str(a.port), '-e', eep, a.avr, a.sd, a.bus]
+        cmd = [emu, '-w', str(a.port), '-e', eep]
+        if a.vcd:
+            os.makedirs(a.vcd, exist_ok=True)
+            cmd += ['-g', a.vcd]
+        cmd += [a.avr, a.sd, a.bus]
     else:
         fw = a.pico or os.path.join(HERE, 'firmware', 'petsd2-dip40-emu.bin')
         emu = a.psd2sim or find('psd2sim', 'PSD2SIM', [os.path.join(HERE, 'psd2sim', 'target', 'release', 'psd2sim')])
@@ -92,11 +99,28 @@ def main():
             sys.exit('psd2sim not found (cd sim/psd2sim && cargo build --release)')
         os.environ['PSD_EEPROM'] = '24c32'          # EEPROM on the adapter pad
         os.environ['PSD_EEPROM_FILE'] = eep
+        if a.vcd:
+            print('note : --vcd is only available for the petSD+ (--avr) so far')
         cmd = [emu, '-b', 'dip40', '-w', str(a.port), '-s', a.sd, fw, a.bus]
 
     print('drive :', ' '.join(cmd))
-    drive = subprocess.Popen(cmd)
-    time.sleep(0.5)
+    drive = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, errors='replace', bufsize=1)
+    attached = threading.Event()
+    ready = re.compile(r'^(petsdsim: .*, Bus |psd2sim: .* an )')
+
+    def relay():                                 # pass drive messages through
+        for line in drive.stderr:
+            sys.stderr.write(line)
+            if ready.match(line):
+                attached.set()
+        attached.set()                           # drive ended
+    threading.Thread(target=relay, daemon=True).start()
+    # start the PET only once the drive is on the bus, otherwise the first
+    # access fails with ?DEVICE NOT PRESENT on a busy machine
+    if not attached.wait(15):
+        print('note : drive did not report being on the bus within 15 s, starting the PET anyway')
+    if drive.poll() is not None:
+        sys.exit(f'drive exited with code {drive.returncode}')
     xcmd = [xpet, '-model', a.model, '-drive8type', '0', '+busdevice8', '-ieeesimlink', a.bus]
     vdata = os.path.join(os.path.dirname(xpet), '..', 'data')
     if os.path.isdir(vdata):                     # VICE run from its build tree

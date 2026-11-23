@@ -3,7 +3,7 @@
  *
  *   petsdsim [-v] [-l lookahead_us] firmware.elf sdkarte.img bus
  *
- * Die Firmware laeuft unveraendert in simavr (8 MHz). Die IEEE-Pins des AVR
+ * Die Firmware laeuft unveraendert in simavr (16 MHz, IEC 8 MHz, per CLKPR). Die IEEE-Pins des AVR
  * gehen ueber ein Modell der Treiber 75160/75161 auf den simlink-Bus, die
  * SD-Karte am SPI ist eine Abbilddatei (SDHC, Blockadressen). Mit
  * -DPSDPANEL (gelinkt gegen libpsdpanel.a aus NODISKEMU-pico sim/psdpanel)
@@ -43,19 +43,18 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <simavr/sim_avr.h>
-#include <simavr/sim_elf.h>
-#include <simavr/sim_irq.h>
-#include <simavr/avr_ioport.h>
-#include <simavr/avr_spi.h>
-#include <simavr/avr_adc.h>
-#include <simavr/avr_eeprom.h>
-#include <simavr/avr_uart.h>
+#include "sim_avr.h"
+#include "sim_elf.h"
+#include "sim_irq.h"
+#include "avr_ioport.h"
+#include "avr_spi.h"
+#include "avr_adc.h"
+#include "avr_eeprom.h"
+#include "avr_uart.h"
 
 #include "simlink.h"
+#include "buscap.h"
 
-#define F_AVR      8000000ULL
-#define PS_CYCLE   (1000000000000ULL / F_AVR)       /* 125000 ps */
 
 /* Datenadressen der Ports (I/O + 0x20) */
 #define A_PINA 0x20
@@ -141,11 +140,41 @@ static void ee_save(void)
     }
 }
 
+/* Takt: Der petSD+ hat einen 16-MHz-Quarz, die Fuses (LFUSE 0xF7, CKDIV8
+   aus) lassen ihn ab Reset ungeteilt laufen. Die Firmware teilt per CLKPR
+   nur fuer IEC auf 8 MHz (bus.h, IEC_SLOW_IEEE_FAST). simavr bildet CLKPR
+   nicht nach; daher hier mitfuehren und die Zeit stueckweise aufsummieren. */
+#define F_XTAL 16000000ULL
+static uint64_t clk_ps, clk_cyc, ps_cycle = 1000000000000ULL / F_XTAL;
+static uint32_t cur_hz = F_XTAL;
+
+static uint64_t sim_ps(void)
+{
+    return clk_ps + (avr->cycle - clk_cyc) * ps_cycle;
+}
+
+static void clkpr_write(struct avr_t *a, avr_io_addr_t addr, uint8_t v, void *param)
+{
+    (void)param;
+    a->data[addr] = v;
+    if (v & 0x80) {
+        return;                         /* CLKPCE, Wert folgt */
+    }
+    clk_ps = sim_ps();
+    clk_cyc = a->cycle;
+    cur_hz = (uint32_t)(F_XTAL >> (v & 0x0f));
+    ps_cycle = 1000000000000ULL / cur_hz;
+    a->frequency = cur_hz;
+    if (verbose) {
+        fprintf(stderr, "petsdsim: CLKPR %02x -> %u Hz\n", v, cur_hz);
+    }
+}
+
 /* jede simulierte Sekunde */
 static void ee_poll(void)
 {
-    if (avr->cycle >= ee_next) {
-        ee_next = avr->cycle + F_AVR;
+    if (sim_ps() >= ee_next) {
+        ee_next = sim_ps() + 1000000000000ULL;
         ee_save();
     }
 }
@@ -274,11 +303,11 @@ static void panel_step(void)
         return;
     }
     i2c_step();
-    if (avr->cycle < panel_next) {
+    if (sim_ps() < panel_next) {
         return;
     }
-    panel_next = avr->cycle + F_AVR / 1000;
-    k = psdpanel_tick(avr->cycle * 1000.0 / F_AVR);
+    panel_next = sim_ps() + 1000000000ULL;
+    k = psdpanel_tick(sim_ps() / 1e9);
     if (k != panel_keys) {
         panel_keys = k;
         avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ, ADC_IRQ_ADC7), psdpanel_key_mv(k));
@@ -288,7 +317,7 @@ static void panel_step(void)
 
 static uint64_t now_ps(void)
 {
-    return off + (uint64_t)avr->cycle * PS_CYCLE;
+    return off + sim_ps();
 }
 
 /* ------------------------------ SD-Karte ------------------------------ */
@@ -470,6 +499,36 @@ static uint8_t sd_byte(uint8_t in)
     return o;
 }
 
+
+/* simavr 1.6 (Debian/Ubuntu-Paket) setzt jedes SPI-Byte pauschal mit 100 us
+   an ("should be speed dependent"). Ein SD-Sektor dauert damit ueber 50 ms
+   statt rund 1 ms, und der PET laeuft beim DIRECTORY (ein TALK pro Byte) in
+   seinen 64-ms-Timeout. Den Timer daher auf die echte Dauer bei eingestelltem
+   SPI-Takt kuerzen, wie es neuere simavr-Versionen selbst tun. */
+static avr_io_t *spi_io;
+
+static void spi_fix(void)
+{
+    static const uint8_t div[4] = { 4, 16, 64, 128 };
+    avr_cycle_timer_slot_p t;
+    uint8_t spcr = avr->data[0x4c];
+    avr_cycle_count_t want;
+    if (!spi_io) return;
+    want = div[spcr & 3];
+    if ((spcr & 0x10) && (avr->data[0x4d] & 0x01)) want >>= 1;   /* MSTR + SPI2X */
+    want <<= 3;
+    for (t = avr->cycle_timers.timer; t; t = t->next) {
+        if (t->param == spi_io) {
+            if (t->when > avr->cycle + want) {
+                avr_cycle_timer_t fn = t->timer;
+                avr_cycle_timer_cancel(avr, fn, spi_io);
+                avr_cycle_timer_register(avr, want, fn, spi_io);
+            }
+            break;
+        }
+    }
+}
+
 static void spi_out(struct avr_irq_t *irq, uint32_t value, void *param)
 {
     (void)irq; (void)param;
@@ -479,10 +538,13 @@ static void spi_out(struct avr_irq_t *irq, uint32_t value, void *param)
     avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_INPUT), r);
 }
 
+static void cap_note(void);
+
 static void ss_change(struct avr_irq_t *irq, uint32_t value, void *param)
 {
     (void)irq; (void)param;
     sd_ss = value ? 1 : 0;
+    cap_note();
     if (sd_ss) {
         cmdlen = 0;
         outlen = outpos = 0;    /* Rest einer Antwort verfaellt */
@@ -492,6 +554,36 @@ static void ss_change(struct avr_irq_t *irq, uint32_t value, void *param)
 /* ------------------------------ IEEE-Bus ------------------------------ */
 
 static uint8_t pub_pull = 0, pub_data = 0;
+static int pub_te = 0;
+static int cap_on = 0, isr_on = 0;
+static unsigned isr_sp;
+static uint8_t ext_pull, ext_data;
+static int ext_valid;
+
+/* Zustand fuer den VCD-Mitschnitt (-g) */
+static void cap_note(void)
+{
+    if (cap_on) {
+        buscap_state(now_ps(), ext_valid ? ext_pull : 0, ext_valid ? ext_data : 0, pub_pull, pub_data,
+                     pub_te, sd_ss, isr_on);
+    }
+}
+
+/* INT0 (ATN) laeuft: Einsprung an Vektor 1 (Adresse 4) bis zum reti */
+static void isr_track(void)
+{
+    unsigned sp = avr->data[0x5d] | (avr->data[0x5e] << 8);
+    if (avr->pc == 0x0004) {
+        if (!isr_on) {
+            isr_on = 1;
+            isr_sp = sp + 2;
+            cap_note();
+        }
+    } else if (isr_on && sp >= isr_sp) {
+        isr_on = 0;
+        cap_note();
+    }
+}
 static int pub_valid = 0;
 
 /* Eingang von aussen treiben. Als "extern" markiert, damit ein Pull-up der
@@ -515,14 +607,29 @@ static void pin(char port, int bit, int v)
     avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ(port), bit), v ? 1 : 0);
 }
 
+/* simavr 1.6 schreibt beim Lesen von PINx fuer Ausgaenge den PORT-Pegel
+   ins PIN-Register. Wird der Pin danach Eingang, bleibt dieser Pegel dort
+   stehen, wenn der extern getriebene Wert gleich der (gefilterten) IRQ-
+   Leitung ist. Daher bei jedem DDR-Schreiben die extern getriebenen Pegel
+   der Eingaenge sofort eintragen; value ist der neue DDR-Wert.
+   Fund und Abhilfe: Torsten (tuti), Forum classic-computing.de. */
+static void ddr_write(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+    int i = (int)(intptr_t)param;
+    static const uint8_t pin_addr[4] = { A_PINA, 0, A_PINC, A_PIND };
+    uint8_t m = ext_mask[i] & (uint8_t)~value;
+    (void)irq;
+    avr->data[pin_addr[i]] = (uint8_t)((avr->data[pin_addr[i]] & ~m) | (ext_val[i] & m));
+}
+
 /* Neuere simavr-Versionen (ab 1.7) schreiben beim Ausgeben den PORT-Wert
    ins PIN-Register. Schaltet die Firmware den Pin danach auf Eingang,
    bleibt dort der alte Ausgangspegel stehen: der externe Pegel wird nicht
    neu eingetragen, weil sich der Wert der IRQ-Leitung nicht aendert
    (gefilterter IRQ). Beim Lesen von PINx die extern getriebenen Eingaenge
    daher selbst eintragen. simavr ruft diesen Hook bei jedem Lesen auf und
-   liefert danach den Inhalt von PINx; simavr 1.6 braucht das nicht und
-   ignoriert die Aenderung fuer den laufenden Lesezugriff. */
+   liefert danach den Inhalt von PINx. simavr 1.6 ignoriert die Aenderung
+   fuer den laufenden Lesezugriff; dort hilft ddr_write (oben). */
 static void pin_read(struct avr_irq_t *irq, uint32_t value, void *param)
 {
     int i = (int)(intptr_t)param;
@@ -534,8 +641,6 @@ static void pin_read(struct avr_irq_t *irq, uint32_t value, void *param)
 }
 
 /* Bus der anderen (pull/data: gesetzt = low) auf die AVR-Eingaenge */
-static uint8_t ext_pull = 0xff, ext_data = 0xff;
-static int ext_valid = 0;
 
 static void apply_ext(uint8_t l, uint8_t d)
 {
@@ -558,6 +663,7 @@ static void apply_ext(uint8_t l, uint8_t d)
     ext_pull = l;
     ext_data = d;
     ext_valid = 1;
+    cap_note();
 }
 
 /* Ausgaenge des AVR ueber die 75160/75161 auf den Bus */
@@ -585,10 +691,15 @@ static void publish(void)
         if (drives(ddrc, portc, 7)) p |= SL_IEEE_NRFD;
         if (drives(ddrc, portc, 6)) p |= SL_IEEE_NDAC;
     }
+    if (te != pub_te) {
+        pub_te = te;
+        cap_note();
+    }
     if (!pub_valid || p != pub_pull || d != pub_data) {
         pub_valid = 1;
         pub_pull = p;
         pub_data = d;
+        cap_note();
         simlink_set(sl, slot, now_ps(), p, d);
         if (verbose > 1) {
             fprintf(stderr, "petsdsim %10.3f ms: AVR -> Bus %02x/%02x%s\n", now_ps() / 1e9, p, d,
@@ -614,6 +725,9 @@ static void uart_out(struct avr_irq_t *irq, uint32_t value, void *param)
 
 /* ------------------------------ Hauptteil ----------------------------- */
 
+static double cap_idle = 0;
+static const char *cap_dir;
+
 int main(int argc, char **argv)
 {
     elf_firmware_t fw;
@@ -624,7 +738,7 @@ int main(int argc, char **argv)
     int pend_n = 0;
     double limit_ms = 0;
 
-    while ((c = getopt(argc, argv, "vl:w:pk:t:e:")) != -1) {
+    while ((c = getopt(argc, argv, "vl:w:pk:t:e:g:G:")) != -1) {
         switch (c) {
         case 'v': verbose++; break;
         case 'l': look = (uint64_t)(atof(optarg) * 1e6); break;
@@ -632,6 +746,8 @@ int main(int argc, char **argv)
         case 'p': panel_on = 1; break;                              /* Bedienfeld ohne Webseite */
         case 'k': panel_on = 1; panel_hold = optarg; break;         /* Tasten ab Start */
         case 't': limit_ms = atof(optarg); break;                   /* Ende nach ms */
+        case 'g': cap_on = 1; cap_dir = optarg; break;     /* VCD-Mitschnitte */
+        case 'G': cap_idle = atof(optarg); break;                 /* Ruhezeit ms */
         case 'e': ee_path = strcmp(optarg, "-") ? optarg : NULL; break;  /* EEPROM-Datei */
         default: goto usage;
         }
@@ -639,8 +755,11 @@ int main(int argc, char **argv)
     if (argc - optind != 3) {
 usage:
         fprintf(stderr, "usage: petsdsim [-v] [-l vorausschau_us] [-w port | -p] [-k tasten] [-t ms] [-e eeprom|-]\n"
-                        "                firmware.elf sdkarte.img bus|-\n");
+                        "                [-g vcd-verzeichnis [-G ruhezeit_ms]] firmware.elf sdkarte.img bus|-\n");
         return 1;
+    }
+    if (cap_on) {
+        buscap_init(cap_dir, cap_idle);
     }
 #ifndef PSDPANEL
     if (panel_on) {
@@ -661,7 +780,7 @@ usage:
         return 1;
     }
     avr_init(avr);
-    avr->frequency = F_AVR;
+    avr->frequency = F_XTAL;
     avr->avcc = 5000;
     avr->aref = 5000;
     avr->vcc = 5000;
@@ -679,6 +798,12 @@ usage:
 
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_OUTPUT), spi_out, NULL);
     {
+        avr_io_t *io;
+        for (io = avr->io_port; io; io = io->next) {
+            if (io->kind && !strcmp(io->kind, "spi")) { spi_io = io; break; }
+        }
+    }
+    {
         uint32_t f = 0;
         avr_ioctl(avr, AVR_IOCTL_UART_GET_FLAGS('0'), &f);
         f &= ~AVR_UART_FLAG_STDIO;
@@ -689,6 +814,10 @@ usage:
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)0);
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('C'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)2);
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('D'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)3);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), IOPORT_IRQ_DIRECTION_ALL), ddr_write, (void *)(intptr_t)0);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('C'), IOPORT_IRQ_DIRECTION_ALL), ddr_write, (void *)(intptr_t)2);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('D'), IOPORT_IRQ_DIRECTION_ALL), ddr_write, (void *)(intptr_t)3);
+    avr_register_io_write(avr, 0x61, clkpr_write, NULL);    /* CLKPR */
     /* feste Eingaenge: Karte da, kein Schreibschutz, I2C-Leitungen hoch,
        Tasten: ADC7 etwa 550 (Ruhewert ohne Taste, readbuttons.inc) */
     pin('D', 5, 0);
@@ -707,16 +836,22 @@ usage:
         fprintf(stderr, "petsdsim: %s, Karte %s, ohne Bus\n", argv[optind], argv[optind + 1]);
         while (!stop) {
             int st = avr_run(avr);
+            spi_fix();
+            if (cap_on) {
+                isr_track();
+                buscap_poll(now_ps());
+            }
             if (st == cpu_Done || st == cpu_Crashed) {
                 fprintf(stderr, "petsdsim: AVR angehalten (%d) bei PC %04x\n", st, avr->pc);
                 break;
             }
             panel_step();
             ee_poll();
-            if (limit_ms > 0 && avr->cycle * 1000.0 / F_AVR >= limit_ms) {
+            if (limit_ms > 0 && sim_ps() / 1e9 >= limit_ms) {
                 break;
             }
         }
+        if (cap_on) buscap_close();
         ee_save();
         fclose(img);
         return 0;
@@ -817,6 +952,11 @@ usage:
                 pend_n--;
             }
             st = avr_run(avr);
+            spi_fix();
+            if (cap_on) {
+                isr_track();
+                buscap_poll(now_ps());
+            }
             {
                 unsigned sp = avr->data[0x5d] | (avr->data[0x5e] << 8);
                 if (sp < min_sp) min_sp = sp;
@@ -838,10 +978,11 @@ usage:
                 fprintf(stderr, "petsdsim %10.3f ms: PC %05x SP %04x PIND %02x PINC %02x PORTB %02x DDRB %02x SPI %lu ss %d ADC %d ADMUX %02x\n", now_ps() / 1e9, avr->pc,
                         avr->data[0x5d] | (avr->data[0x5e] << 8), avr->data[A_PIND], avr->data[A_PINC],
                         avr->data[0x25], avr->data[0x24], spi_n, sd_ss, avr->data[0x78] | (avr->data[0x79] << 8), avr->data[0x7c]);
-                next_rep = avr->cycle + F_AVR / 4;
+                next_rep = avr->cycle + cur_hz / 4;
             }
         }
     }
+    if (cap_on) buscap_close();
     simlink_detach(sl, slot);
     simlink_close(sl, 0);
     ee_save();
