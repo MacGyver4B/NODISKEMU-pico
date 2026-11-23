@@ -61,9 +61,14 @@ endif
 petsdsim: petsdsim.c buscap.c buscap.h $(SIMLINK_DIR)/simlink.c $(PANEL) $(SIMAVR_LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ petsdsim.c buscap.c $(SIMLINK_DIR)/simlink.c $(LIBS)
 
-# simavr seriell bauen: parallel faellt die Kern-Konfiguration aus der Reihe
+# simavr seriell bauen: parallel faellt die Kern-Konfiguration aus der Reihe.
+# simavr baut mit -Werror; neuere GCC melden in simavr-Quellen Warnungen,
+# die keine Fehler sind - diese Arten daher nicht als Fehler werten.
+SIMAVR_NOERR = -Wno-error=array-bounds -Wno-error=stringop-overflow \
+               -Wno-error=stringop-truncation -Wno-error=format-truncation \
+               -Wno-error=dangling-pointer -Wno-error=use-after-free
 $(SIMAVR_OBJ)/libsimavr.a:
-	$(MAKE) -j1 -C $(SIMAVR_DIR) libsimavr
+	CFLAGS="$(SIMAVR_NOERR)" $(MAKE) -j1 -C $(SIMAVR_DIR) libsimavr
 
 $(PANEL):
 	cd ../psdpanel && cargo build --release

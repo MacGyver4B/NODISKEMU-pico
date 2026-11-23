@@ -62,7 +62,9 @@ jobs:
 
       - name: simavr 1.8
         run: |
-          make -j1 -C sim/simavr/simavr CC=gcc AVR_ROOT=/ucrt64/avr libsimavr
+          # simavr baut mit -Werror; GCC-Warnungen in simavr-Quellen nicht als Fehler werten
+          CFLAGS="-Wno-error=array-bounds -Wno-error=stringop-overflow -Wno-error=stringop-truncation -Wno-error=format-truncation -Wno-error=dangling-pointer -Wno-error=use-after-free" \
+            make -j1 -C sim/simavr/simavr CC=gcc AVR_ROOT=/ucrt64/avr libsimavr
           # ohne libelf laedt simavr keine ELF-Dateien; das zeigt der Probelauf
           ls -l sim/simavr/simavr/obj-*/libsimavr.a
 
