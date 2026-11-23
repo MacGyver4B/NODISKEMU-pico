@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Windows x64 (MSYS2 MINGW64)
+    name: Windows x64 (MSYS2 UCRT64)
     runs-on: windows-latest
     defaults:
       run:
@@ -18,7 +18,7 @@ jobs:
       - run: git config --global core.autocrlf input
         shell: bash
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: false
 
@@ -27,7 +27,7 @@ jobs:
         run: git submodule update --init sim/simavr
 
       - name: simlink aus VICE-LRE-SIMLINK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: MacGyver4B/VICE-LRE-SIMLINK
           ref: simlink
@@ -36,7 +36,7 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             make
@@ -44,11 +44,13 @@ jobs:
             perl
             gawk
             git
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-libelf
-            mingw-w64-x86_64-avr-toolchain
-            mingw-w64-x86_64-rust
-            mingw-w64-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-libelf
+            mingw-w64-ucrt-x86_64-avr-gcc
+            mingw-w64-ucrt-x86_64-avr-binutils
+            mingw-w64-ucrt-x86_64-avr-libc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
 
       - name: Werkzeuge
         run: |
@@ -60,7 +62,9 @@ jobs:
 
       - name: simavr 1.8
         run: |
-          make -j1 -C sim/simavr/simavr CC=gcc libsimavr
+          # simavr baut mit -Werror; GCC-Warnungen in simavr-Quellen nicht als Fehler werten
+          CFLAGS="-Wno-error=array-bounds -Wno-error=stringop-overflow -Wno-error=stringop-truncation -Wno-error=format-truncation -Wno-error=dangling-pointer -Wno-error=use-after-free" \
+            make -j1 -C sim/simavr/simavr CC=gcc AVR_ROOT=/ucrt64/avr libsimavr
           # ohne libelf laedt simavr keine ELF-Dateien; das zeigt der Probelauf
           ls -l sim/simavr/simavr/obj-*/libsimavr.a
 
@@ -114,15 +118,16 @@ jobs:
           cp sim/petsdsim/examples/*.vcd $P/examples/
           # DLLs, die nicht von Windows selbst kommen, mitgeben
           for f in $P/*.exe; do
-            ldd "$f" | awk '/mingw64/ {print $3}' | xargs -r -I{} cp -n {} $P/
+            ldd "$f" | awk '/ucrt64/ {print $3}' | xargs -r -I{} cp -n {} $P/
           done
           cat > $P/LIESMICH.txt <<'EOF'
           petSD+ / petSD2 simulation for Windows (built by GitHub Actions)
 
           Needs: Python 3 for Windows, and xpet with simlink from
           VICE-LRE-SIMLINK (workflow "simlink - Windows GTK3 build").
-          Unpack that build into a folder "vice" next to this file
-          (so that vice\bin\xpet.exe exists), or pass --xpet path\to\xpet.exe.
+          Unpack the VICE zip from that build next to this file (the folder
+          GTK3VICE-... with bin\xpet.exe is found automatically), or pass
+          --xpet path\to\xpet.exe.
 
             py petsd-sim.py --new-sd card.img
             py petsd-sim.py --avr  --sd card.img     petSD+ (included firmware)
@@ -133,7 +138,7 @@ jobs:
           ls -l $P
           echo "PKG=$P" >> $GITHUB_ENV
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: petsd-sim-windows
           path: ${{ env.PKG }}
