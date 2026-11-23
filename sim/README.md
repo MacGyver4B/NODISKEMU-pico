@@ -93,8 +93,10 @@ No WSL needed. The GitHub workflow "sim - Windows build" (Actions tab of
 this repo, started by hand) builds `petsdsim.exe`, `psd2sim.exe` and the
 petSD+ firmware with MSYS2 and packs them with the launcher into the
 artifact `petsd-sim-windows`. xpet comes from the workflow "simlink -
-Windows GTK3 build" of VICE-LRE-SIMLINK: unpack it into a folder `vice` next
-to `petsd-sim.py` (so that `vice\bin\xpet.exe` exists) or pass `--xpet`.
+Windows GTK3 build" of VICE-LRE-SIMLINK (artifact `vice-gtk3-win64-simlink`):
+unpack the VICE zip inside it next to `petsd-sim.py`; the folder
+`GTK3VICE-...` with `bin\xpet.exe` is found automatically (as is a folder
+`vice`), otherwise pass `--xpet`.
 Then, with Python 3 for Windows:
 
 ```

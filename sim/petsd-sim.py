@@ -17,6 +17,7 @@ Runs on Linux, macOS and Windows (native build from the GitHub workflow
 PSD2SIM.
 """
 import argparse
+import glob
 import gzip
 import os
 import platform
@@ -84,8 +85,10 @@ def main():
         ap.error('--sd IMG is required (create one with --new-sd IMG)')
     eep = a.eeprom or os.path.splitext(a.sd)[0] + '.eep'
 
-    xpet = a.xpet or find('xpet', 'XPET', [os.path.join(HERE, 'vice-lre-simlink', 'vice', 'src', 'xpet'),
-                                           os.path.join(HERE, 'vice', 'bin', 'xpet')])
+    # VICE-Windows-Build: Ordner vice\ oder so, wie er aus dem Zip kommt (GTK3VICE-...)
+    vice_dirs = [os.path.join(HERE, 'vice')] + sorted(glob.glob(os.path.join(HERE, 'GTK3VICE*')), reverse=True)
+    xpet = a.xpet or find('xpet', 'XPET', [os.path.join(HERE, 'vice-lre-simlink', 'vice', 'src', 'xpet')] +
+                          [os.path.join(d, 'bin', 'xpet') for d in vice_dirs])
     if not xpet:
         sys.exit('xpet not found (build VICE-LRE-SIMLINK, then use --xpet or XPET=...)')
 

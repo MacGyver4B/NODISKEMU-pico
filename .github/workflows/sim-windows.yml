@@ -125,8 +125,9 @@ jobs:
 
           Needs: Python 3 for Windows, and xpet with simlink from
           VICE-LRE-SIMLINK (workflow "simlink - Windows GTK3 build").
-          Unpack that build into a folder "vice" next to this file
-          (so that vice\bin\xpet.exe exists), or pass --xpet path\to\xpet.exe.
+          Unpack the VICE zip from that build next to this file (the folder
+          GTK3VICE-... with bin\xpet.exe is found automatically), or pass
+          --xpet path\to\xpet.exe.
 
             py petsd-sim.py --new-sd card.img
             py petsd-sim.py --avr  --sd card.img     petSD+ (included firmware)
