@@ -259,8 +259,9 @@ static void lcd_put_device(uint8_t i) {
   if (md_active) {
     addr = md_dev[i].address;
     err  = i == md_cur ? current_error : md_dev[i].err_code;
-    part = md_dev[i].slot[drive < MD_DRIVES ? drive : 0];
-    if (part == MD_NO_SLOT) part = md_dev[i].slot[0];
+    /* no fallback to drive 0 here: a drive without a mapping shows
+       neither track nor format */
+    part = drive < MD_DRIVES ? md_dev[i].slot[drive] : MD_NO_SLOT;
   } else {
     addr = device_address;
     err  = current_error;
@@ -270,13 +271,18 @@ static void lcd_put_device(uint8_t i) {
   lcd_put_dec(addr, 2);
   lcd_putc(':');
   lcd_putc('0' + drive);
-  lcd_putc(' ');
-  bool image = part < max_part && partition[part].fop == &d64ops;
-  if (image && lcd_dev_track[i]) {
+  /* 5 columns: " Tnnn" for an image, the directory for FAT */
+  bool mapped = part < max_part;
+  if (mapped && partition[part].fop == &d64ops && lcd_dev_track[i]) {
+    lcd_putc(' ');
     lcd_putc('T');
     lcd_put_dec(lcd_dev_track[i], 3);
+  } else if (mapped && partition[part].fop == &fatops) {
+    /* root "/"; names of subdirectories follow with the path line */
+    if (partition[part].current_dir.fat == 0) lcd_puts_P(PSTR("/    "));
+    else                                      lcd_puts_P(PSTR("/..  "));
   } else {
-    lcd_puts_P(PSTR("    "));
+    lcd_puts_P(PSTR("     "));
   }
   lcd_puts_P(PSTR("  "));
   lcd_put_dec(err, 2);
