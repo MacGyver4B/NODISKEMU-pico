@@ -283,7 +283,7 @@ static void lcd_put_device(uint8_t i) {
   lcd_putc(' ');
   /* 00-19 are messages, 73 is the DOS version: not an error */
   if (err < 20 || err == 73) lcd_puts_P(PSTR("OK "));
-  else                       lcd_puts_P(PSTR("ERR"));
+  else                       lcd_puts_P(PSTR("ER "));
   lcd_putc(lcd_format_char(part));
 }
 
