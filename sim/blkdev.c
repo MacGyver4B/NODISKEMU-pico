@@ -274,6 +274,11 @@ static void flush(void)
     }
     memset(c_used, 0, sizeof c_used);
     c_count = 0;
+    /* Der Vorlesepuffer kann Bloecke enthalten, die beim Vorlesen noch
+       ungeschrieben im Schreibpuffer lagen (also mit altem Inhalt von der
+       Karte gelesen wurden). Bisher deckte der Schreibpuffer sie ab; nach dem
+       Leeren wuerde der alte Inhalt sichtbar. Daher verwerfen. */
+    ra_n = 0;
 }
 
 /* -------------------------------- Schnittstelle -------------------------------- */
