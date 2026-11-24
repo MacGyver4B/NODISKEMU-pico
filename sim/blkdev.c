@@ -16,8 +16,9 @@
  * Betriebssystem beim direkten Laufwerkszugriff nichts; die FAT-Suche nach
  * freien Clustern liest sonst Tausende Sektoren einzeln ueber USB.
  *
- * Ein gezogener Stick gilt erst als entfernt, wenn er 1,5 s lang auf
- * keine Abfrage antwortet; einzelne Lese-/Schreibfehler werden nur gemeldet.
+ * Ein gezogener Stick gilt erst als entfernt, wenn er dreimal in Folge
+ * (1,5 s) weder die Zustandsabfrage beantwortet noch Sektor 0 liefert;
+ * einzelne Lese-/Schreibfehler werden nur gemeldet.
  *
  * Unter Windows verlangt ein Laufwerk (\\.\PhysicalDriveN) Zugriffe in
  * ganzen Sektoren aus ausgerichteten Puffern. Schreiben auf ein Laufwerk
@@ -343,7 +344,15 @@ int blk_present(void)
            ein ausgelasteter Stick antwortet auch mal nicht */
         static int fails;
         next_check = t + 500;
-        fails = dev_check() ? fails + 1 : 0;
+        if (dev_check() == 0) {
+            fails = 0;
+        } else {
+            /* Abfrage gescheitert (Windows beantwortet sie bei einem
+               ausgelasteten Stick nicht immer): mit einem echten Lesezugriff
+               gegenpruefen - ein vorhandener Stick liefert den Sektor */
+            static uint8_t probe[512] __attribute__((aligned(4096)));
+            fails = raw_rw(0, probe, 1, 0) ? fails + 1 : 0;
+        }
         if (fails >= 3) set_gone();
     }
     return !gone;
