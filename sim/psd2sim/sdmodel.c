@@ -189,6 +189,7 @@ int sd_open(const char *path, int v)
 
 unsigned long sd_blocks(void) { return (unsigned long)img_blocks; }
 int sd_present(void) { return blk_present(); }
+void sd_close(void) { blk_close(); }
 
 void sd_select(int ss)
 {

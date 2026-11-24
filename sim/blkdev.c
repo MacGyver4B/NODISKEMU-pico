@@ -1,23 +1,50 @@
 /* blkdev.c - SD-Karte als Datei oder Laufwerk (512-Byte-Bloecke), siehe blkdev.h
  *
  * Offsets sind 64 Bit (stdio mit long war unter Windows auf 2 GB begrenzt).
+ *
+ * Schreibpuffer: Geschriebene Bloecke sammeln sich im Speicher und gehen
+ * gebuendelt (aufsteigend sortiert, zusammenhaengende Laeufe in einem
+ * Zugriff) hinaus, sobald 0,3 s Echtzeit lang nichts mehr geschrieben
+ * wurde, der Puffer voll ist oder beim Schliessen. Ein USB-Stick ist bei
+ * einzelnen 512-Byte-Schreibzugriffen sehr langsam (er schreibt intern
+ * jedesmal einen ganzen Loeschblock); FAT und Verzeichnis werden ausserdem
+ * mehrfach geschrieben und gehen so nur einmal hinaus. Gelesen wird aus dem
+ * Puffer, wenn der Block dort liegt.
+ *
+ * Ein gezogener Stick gilt erst als entfernt, wenn er 1,5 s lang auf
+ * keine Abfrage antwortet; einzelne Lese-/Schreibfehler werden nur gemeldet.
+ *
  * Unter Windows verlangt ein Laufwerk (\\.\PhysicalDriveN) Zugriffe in
- * ganzen Sektoren; die Daten laufen deshalb ueber einen ausgerichteten
- * Puffer. Schreiben auf ein Laufwerk gelingt nur, wenn Windows das Volume
- * nicht mehr benutzt - das sperrt petsd-sim.py vor dem Start.
+ * ganzen Sektoren aus ausgerichteten Puffern. Schreiben auf ein Laufwerk
+ * gelingt nur, wenn Windows das Volume nicht mehr benutzt - das sperrt
+ * petsd-sim.py vor dem Start.
  */
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 #endif
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "blkdev.h"
+
+#define RUN_MAX     2048            /* Bloecke je Schreibzugriff (1 MB) */
+#define CACHE_SLOTS 8192            /* Hash-Plaetze (Zweierpotenz) */
+#define CACHE_MAX   4096            /* gepufferte Bloecke (2 MB), dann leeren */
+#define IDLE_MS     300             /* so lange Ruhe, dann leeren */
 
 static const char *prefix = "blkdev";
 static int told_r, told_w;
 static int is_dev;          /* Laufwerk statt Datei */
 static int gone;            /* Laufwerk entfernt (endgueltig) */
+
+static uint8_t rbuf[RUN_MAX * 512] __attribute__((aligned(4096)));
+
+static uint64_t c_blk[CACHE_SLOTS];
+static uint8_t c_used[CACHE_SLOTS];
+static uint8_t *c_data;
+static int c_count;
+static uint64_t last_write_ms;
 
 void blk_set_prefix(const char *p) { prefix = p; }
 
@@ -27,6 +54,11 @@ static void set_gone(void)
         gone = 1;
         fprintf(stderr, "%s: Karte entfernt (Laufwerk antwortet nicht mehr) - "
                 "zum Wiedereinbinden die Simulation neu starten\n", prefix);
+        if (c_count) {
+            fprintf(stderr, "%s: %d gepufferte Bloecke nicht mehr geschrieben\n", prefix, c_count);
+        }
+        memset(c_used, 0, sizeof c_used);
+        c_count = 0;
     }
 }
 
@@ -35,12 +67,12 @@ static void set_gone(void)
 #include <winioctl.h>
 
 static HANDLE h = INVALID_HANDLE_VALUE;
-static uint8_t abuf[4096] __attribute__((aligned(4096)));
 
-static void werr(const char *what)
+static uint64_t now_ms(void) { return GetTickCount64(); }
+
+static void werr(const char *what, DWORD e)
 {
     char msg[256];
-    DWORD e = GetLastError();
     msg[0] = 0;
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, e, 0,
                    msg, sizeof msg, NULL);
@@ -48,7 +80,7 @@ static void werr(const char *what)
     fprintf(stderr, "%s: %s: Fehler %lu (%s)\n", prefix, what, (unsigned long)e, msg);
 }
 
-int blk_open(const char *path, uint64_t *blocks)
+static int sys_open(const char *path, uint64_t *blocks)
 {
     LARGE_INTEGER sz;
     GET_LENGTH_INFORMATION li;
@@ -57,7 +89,7 @@ int blk_open(const char *path, uint64_t *blocks)
     h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                     NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
-        werr(path);
+        werr(path, GetLastError());
         return -1;
     }
     if (GetFileSizeEx(h, &sz)) {
@@ -66,7 +98,7 @@ int blk_open(const char *path, uint64_t *blocks)
         *blocks = (uint64_t)li.Length.QuadPart / 512;
         is_dev = 1;
     } else {
-        werr(path);
+        werr(path, GetLastError());
         CloseHandle(h);
         h = INVALID_HANDLE_VALUE;
         return -1;
@@ -74,31 +106,25 @@ int blk_open(const char *path, uint64_t *blocks)
     return 0;
 }
 
-static int xfer(uint64_t blk, int wr)
+/* buf muss auf 4096 ausgerichtet sein (rbuf) */
+static int raw_rw(uint64_t blk, uint8_t *buf, unsigned n, int wr)
 {
     OVERLAPPED ov;
-    DWORD n = 0;
+    DWORD got = 0, len = n * 512;
     BOOL ok;
 
     memset(&ov, 0, sizeof ov);
     ov.Offset = (DWORD)(blk * 512);
     ov.OffsetHigh = (DWORD)((blk * 512) >> 32);
-    if (gone) return -1;
-    ok = wr ? WriteFile(h, abuf, 512, &n, &ov) : ReadFile(h, abuf, 512, &n, &ov);
-    if (!ok || n != 512) {
+    ok = wr ? WriteFile(h, buf, len, &got, &ov) : ReadFile(h, buf, len, &got, &ov);
+    if (!ok || got != len) {
         DWORD e = GetLastError();
-        if (is_dev && (e == ERROR_DEVICE_NOT_CONNECTED || e == ERROR_NOT_READY ||
-                       e == ERROR_NO_SUCH_DEVICE || e == ERROR_FILE_NOT_FOUND ||
-                       e == ERROR_DEV_NOT_EXIST || e == ERROR_GEN_FAILURE)) {
-            set_gone();
-            return -1;
-        }
         int *told = wr ? &told_w : &told_r;
         if (!*told) {
             char what[64];
             snprintf(what, sizeof what, "%s Block %llu", wr ? "Schreiben" : "Lesen",
                      (unsigned long long)blk);
-            werr(what);
+            werr(what, e);
             *told = 1;
         }
         return -1;
@@ -106,34 +132,13 @@ static int xfer(uint64_t blk, int wr)
     return 0;
 }
 
-int blk_read(uint64_t blk, uint8_t *d)
+static int dev_check(void)
 {
-    if (xfer(blk, 0)) return -1;
-    memcpy(d, abuf, 512);
-    return 0;
-}
-
-int blk_write(uint64_t blk, const uint8_t *d)
-{
-    memcpy(abuf, d, 512);
-    return xfer(blk, 1);
-}
-
-int blk_present(void)
-{
-    static ULONGLONG next;
     DWORD n;
-
-    if (!is_dev || gone) return !gone;
-    if (GetTickCount64() < next) return 1;
-    next = GetTickCount64() + 500;
-    if (!DeviceIoControl(h, IOCTL_STORAGE_CHECK_VERIFY2, NULL, 0, NULL, 0, &n, NULL)) {
-        set_gone();
-    }
-    return !gone;
+    return DeviceIoControl(h, IOCTL_STORAGE_CHECK_VERIFY2, NULL, 0, NULL, 0, &n, NULL) ? 0 : -1;
 }
 
-void blk_close(void)
+static void sys_close(void)
 {
     if (h != INVALID_HANDLE_VALUE) {
         FlushFileBuffers(h);
@@ -155,9 +160,17 @@ void blk_close(void)
 
 static int fd = -1;
 
-int blk_open(const char *path, uint64_t *blocks)
+static uint64_t now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
+}
+
+static int sys_open(const char *path, uint64_t *blocks)
 {
     off_t end;
+    struct stat st;
 
     fd = open(path, O_RDWR);
     if (fd < 0) {
@@ -172,76 +185,36 @@ int blk_open(const char *path, uint64_t *blocks)
         return -1;
     }
     *blocks = (uint64_t)end / 512;
-    {
-        struct stat st;
-        is_dev = fstat(fd, &st) == 0 && S_ISBLK(st.st_mode);
+    is_dev = fstat(fd, &st) == 0 && S_ISBLK(st.st_mode);
+    return 0;
+}
+
+static int raw_rw(uint64_t blk, uint8_t *buf, unsigned n, int wr)
+{
+    size_t len = (size_t)n * 512;
+    ssize_t r = wr ? pwrite(fd, buf, len, (off_t)(blk * 512)) : pread(fd, buf, len, (off_t)(blk * 512));
+    if (r != (ssize_t)len) {
+        int *told = wr ? &told_w : &told_r;
+        if (!*told) {
+            fprintf(stderr, "%s: %s Block %llu: %s\n", prefix, wr ? "Schreiben" : "Lesen",
+                    (unsigned long long)blk, strerror(errno));
+            *told = 1;
+        }
+        return -1;
     }
     return 0;
 }
 
-static int dev_error(void)
+static int dev_check(void)
 {
-    if (is_dev && (errno == ENODEV || errno == ENXIO || errno == EIO
-#ifdef ENOMEDIUM
-                   || errno == ENOMEDIUM
-#endif
-                   )) {
-        set_gone();
-        return 1;
-    }
-    return 0;
-}
-
-int blk_present(void)
-{
-    static struct timespec next;
-    struct timespec now;
-
-    if (!is_dev || gone) return !gone;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    if (now.tv_sec < next.tv_sec || (now.tv_sec == next.tv_sec && now.tv_nsec < next.tv_nsec))
-        return 1;
-    next = now;
-    next.tv_nsec += 500000000L;
-    if (next.tv_nsec >= 1000000000L) { next.tv_sec++; next.tv_nsec -= 1000000000L; }
 #ifdef __linux__
-    {
-        uint64_t sz = 0;
-        if (ioctl(fd, BLKGETSIZE64, &sz) != 0 || sz == 0) set_gone();
-    }
+    uint64_t sz = 0;
+    if (ioctl(fd, BLKGETSIZE64, &sz) != 0 || sz == 0) return -1;
 #endif
-    return !gone;
-}
-
-int blk_read(uint64_t blk, uint8_t *d)
-{
-    if (gone) return -1;
-    if (pread(fd, d, 512, (off_t)(blk * 512)) != 512) {
-        if (dev_error()) return -1;
-        if (!told_r) {
-            fprintf(stderr, "%s: Lesen Block %llu: %s\n", prefix, (unsigned long long)blk, strerror(errno));
-            told_r = 1;
-        }
-        return -1;
-    }
     return 0;
 }
 
-int blk_write(uint64_t blk, const uint8_t *d)
-{
-    if (gone) return -1;
-    if (pwrite(fd, d, 512, (off_t)(blk * 512)) != 512) {
-        if (dev_error()) return -1;
-        if (!told_w) {
-            fprintf(stderr, "%s: Schreiben Block %llu: %s\n", prefix, (unsigned long long)blk, strerror(errno));
-            told_w = 1;
-        }
-        return -1;
-    }
-    return 0;
-}
-
-void blk_close(void)
+static void sys_close(void)
 {
     if (fd >= 0) {
         fsync(fd);
@@ -250,3 +223,106 @@ void blk_close(void)
     }
 }
 #endif
+
+/* ----------------------------- Schreibpuffer ----------------------------- */
+
+static int slot_of(uint64_t blk, int insert)
+{
+    unsigned i = (unsigned)((blk * 2654435761u) & (CACHE_SLOTS - 1));
+    while (c_used[i]) {
+        if (c_blk[i] == blk) return (int)i;
+        i = (i + 1) & (CACHE_SLOTS - 1);
+    }
+    if (!insert) return -1;
+    c_used[i] = 1;
+    c_blk[i] = blk;
+    c_count++;
+    return (int)i;
+}
+
+static int cmp_slot(const void *a, const void *b)
+{
+    uint64_t x = c_blk[*(const int *)a], y = c_blk[*(const int *)b];
+    return x < y ? -1 : x > y;
+}
+
+static void flush(void)
+{
+    static int idx[CACHE_SLOTS];
+    int n = 0, i, j;
+
+    if (!c_count) return;
+    for (i = 0; i < CACHE_SLOTS; i++)
+        if (c_used[i]) idx[n++] = i;
+    qsort(idx, (size_t)n, sizeof idx[0], cmp_slot);
+    for (i = 0; i < n && !gone; i = j) {
+        uint64_t start = c_blk[idx[i]];
+        for (j = i; j < n && j - i < RUN_MAX && c_blk[idx[j]] == start + (uint64_t)(j - i); j++)
+            memcpy(rbuf + (size_t)(j - i) * 512, c_data + (size_t)idx[j] * 512, 512);
+        raw_rw(start, rbuf, (unsigned)(j - i), 1);
+    }
+    memset(c_used, 0, sizeof c_used);
+    c_count = 0;
+}
+
+/* -------------------------------- Schnittstelle -------------------------------- */
+
+int blk_open(const char *path, uint64_t *blocks)
+{
+    c_data = malloc((size_t)CACHE_SLOTS * 512);
+    if (!c_data) {
+        fprintf(stderr, "%s: kein Speicher fuer den Schreibpuffer\n", prefix);
+        return -1;
+    }
+    return sys_open(path, blocks);
+}
+
+int blk_read(uint64_t blk, uint8_t *d)
+{
+    int s;
+    if (gone) return -1;
+    if ((s = slot_of(blk, 0)) >= 0) {
+        memcpy(d, c_data + (size_t)s * 512, 512);
+        return 0;
+    }
+    if (raw_rw(blk, rbuf, 1, 0)) return -1;
+    memcpy(d, rbuf, 512);
+    return 0;
+}
+
+int blk_write(uint64_t blk, const uint8_t *d)
+{
+    int s;
+    if (gone) return -1;
+    if (c_count >= CACHE_MAX && slot_of(blk, 0) < 0) flush();
+    s = slot_of(blk, 1);
+    memcpy(c_data + (size_t)s * 512, d, 512);
+    last_write_ms = now_ms();
+    return 0;
+}
+
+int blk_present(void)
+{
+    static uint64_t next_check;
+    uint64_t t;
+
+    if (gone) return 0;
+    if (!c_count && !is_dev) return 1;
+    t = now_ms();
+    if (c_count && t - last_write_ms >= IDLE_MS) flush();
+    if (is_dev && t >= next_check) {
+        /* erst nach drei Fehlschlaegen in Folge (1,5 s) als gezogen werten:
+           ein ausgelasteter Stick antwortet auch mal nicht */
+        static int fails;
+        next_check = t + 500;
+        fails = dev_check() ? fails + 1 : 0;
+        if (fails >= 3) set_gone();
+    }
+    return !gone;
+}
+
+void blk_close(void)
+{
+    flush();
+    sys_close();
+}

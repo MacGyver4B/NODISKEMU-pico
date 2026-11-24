@@ -480,8 +480,15 @@ def start(a, card, eep):
         webbrowser.open(f'http://localhost:{a.port}/')
     try:
         subprocess.call(xcmd)
+        # the drive notices the PET has gone and ends by itself after writing
+        # back its buffers (card, EEPROM); only stop it if it does not
+        try:
+            drive.wait(10)
+        except subprocess.TimeoutExpired:
+            pass
     finally:
-        drive.terminate()
+        if drive.poll() is None:
+            drive.terminate()
         try:
             drive.wait(5)
         except subprocess.TimeoutExpired:

@@ -16,7 +16,8 @@ int  blk_open(const char *path, uint64_t *blocks);
 int  blk_read(uint64_t blk, uint8_t *d);
 int  blk_write(uint64_t blk, const uint8_t *d);
 void blk_close(void);
-/* 1 = Karte da. Ein Laufwerk (USB-Stick) gilt als entfernt, sobald es nicht
+/* Leert ausserdem den Schreibpuffer nach 0,3 s Ruhe - regelmaessig aufrufen.
+   1 = Karte da. Ein Laufwerk (USB-Stick) gilt als entfernt, sobald es nicht
    mehr antwortet; geprueft hoechstens alle 0,5 s Echtzeit, endgueltig (zum
    Wiedereinbinden die Simulation neu starten). Abbilddateien sind immer da. */
 int  blk_present(void);

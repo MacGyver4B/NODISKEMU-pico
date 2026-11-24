@@ -786,6 +786,8 @@ static void relay_TalkLoop(uint8_t sa) {
 
 void ieee488_Unlisten(void) {
   uart_puts_P(PSTR("ULN\r\n"));
+  // access indicator: a long transfer (SAVE) ends here, light it from now
+  if (ieee488_ListenActive) lcd_mark_selected(ieee488_ListenActive);
   ieee488_BusIdle();
 
   // If we received a command or a file name to open, process it now
@@ -806,6 +808,7 @@ void ieee488_Unlisten(void) {
 
 void ieee488_Untalk(void) {
   uart_puts_P(PSTR("UTK\r\n"));
+  if (ieee488_TalkingDevice) lcd_mark_selected(ieee488_TalkingDevice);
   ieee488_BusIdle();
   ieee488_TalkingDevice = 0;            // we don't talk any more
 }

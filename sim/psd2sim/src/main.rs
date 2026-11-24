@@ -111,6 +111,7 @@ extern "C" {
     fn sd_open(path: *const c_char, verbose: c_int) -> c_int;
     fn sd_blocks() -> std::os::raw::c_ulong;
     fn sd_present() -> c_int;
+    fn sd_close();
     fn sd_select(ss: c_int);
     fn sd_xfer(b: u8) -> u8;
 }
@@ -224,6 +225,7 @@ struct Bridge {
     pins: Pins,
     panel: Option<panel::PanelLink>,
     next_tick: f64,
+    card: bool,      // Karte steckt (USB-Stick nicht gezogen)
 }
 
 impl Bridge {
@@ -240,7 +242,7 @@ impl Bridge {
                 }
             };
             if let Some((cd, wp)) = self.pins.sd_cd_wp {
-                put(cd, unsafe { sd_present() } == 0);   // low = Karte steckt
+                put(cd, !self.card);  // low = Karte steckt
                 put(wp, false);       // nicht schreibgeschuetzt
             }
             // ATtiny25 IO_IEC = 0 sperrt den IEEE-Bus (petSD+ 2.x)
@@ -459,7 +461,7 @@ fn main() {
     let mut br = Bridge {
         verbose, bus: Vec::new(),
         pins: if dip40 { Pins::dip40() } else { Pins::xxl() },
-        panel: None, next_tick: 0.0,
+        panel: None, next_tick: 0.0, card: true,
     };
     if dip40 {
         let p = panel::new_panel();
@@ -681,6 +683,12 @@ fn main() {
             emu.run(n).expect("run");
             mbox(&mut emu, &mut uline);
             br.panel_step(&mut emu);
+            // Schreibpuffer leeren, gezogenen Stick erkennen (Kartenschalter)
+            let card = unsafe { sd_present() } != 0;
+            if card != br.card {
+                br.card = card;
+                br.apply(&mut emu, t);
+            }
             let c = emu.cycles();
             let hz = emu.bus.sys_clk_hz().max(1) as u64;
             t += (c - last_cyc) * 1_000_000_000_000 / hz;
@@ -708,4 +716,5 @@ fn main() {
             simlink_close(b.sl, 0);
         }
     }
+    unsafe { sd_close() };      // Schreibpuffer leeren
 }
