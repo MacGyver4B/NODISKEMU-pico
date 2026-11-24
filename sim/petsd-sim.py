@@ -87,35 +87,61 @@ class Medium:
 
 
 def _win_media():
+    """removable drive letters (GetDriveTypeW) grouped by physical disk; the
+    size is that of the whole disk, so a small partition of a big disk never
+    counts as small. Works without administrator rights."""
     import ctypes
-    import json
-    ps = (r"Get-Disk | Where-Object { $_.BusType -in 'USB','SD','MMC' -and $_.Size -gt 0 -and "
-          r"$_.Size -le %d -and -not $_.IsBoot -and -not $_.IsSystem } | ForEach-Object { "
-          r"$p = @(Get-Partition -DiskNumber $_.Number -ErrorAction SilentlyContinue | "
-          r"Where-Object DriveLetter); [pscustomobject]@{N=$_.Number; S=$_.Size; "
-          r"F=$_.FriendlyName; L=@($p | ForEach-Object { [string]$_.DriveLetter })} } | "
-          r"ConvertTo-Json -Compress" % MAX_BYTES)
-    out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
-                         capture_output=True, text=True).stdout.strip()
-    disks = json.loads(out) if out else []
-    if isinstance(disks, dict):
-        disks = [disks]
+    from ctypes import wintypes
+    k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.CreateFileW.restype = wintypes.HANDLE
+    bad = wintypes.HANDLE(-1).value
+
+    def ioctl(path, code, inp=None, outsize=1024):
+        h = k.CreateFileW(path, 0, 3, None, 3, 0, None)      # no access rights needed
+        if h in (None, bad):
+            return None
+        out = ctypes.create_string_buffer(outsize)
+        n = wintypes.DWORD()
+        ok = k.DeviceIoControl(h, code, inp, len(inp) if inp else 0, out, outsize, ctypes.byref(n), None)
+        k.CloseHandle(h)
+        return out.raw[:n.value] if ok else None
+
+    disks = {}
+    mask = k.GetLogicalDrives()
+    for i in range(26):
+        if not mask >> i & 1:
+            continue
+        letter = chr(65 + i)
+        if k.GetDriveTypeW(f'{letter}:\\') != 2:              # DRIVE_REMOVABLE only
+            continue
+        num = ioctl(rf'\\.\{letter}:', 0x2D1080)               # IOCTL_STORAGE_GET_DEVICE_NUMBER
+        if not num:
+            continue                                             # e.g. empty card reader slot
+        disks.setdefault(int.from_bytes(num[4:8], 'little'), []).append(letter)
     res = []
-    for d in disks:
-        letters = d.get('L') or []
-        if isinstance(letters, str):
-            letters = [letters]
+    for n, letters in sorted(disks.items()):
+        dev = rf'\\.\PhysicalDrive{n}'
+        geo = ioctl(dev, 0x700A0)                               # IOCTL_DISK_GET_DRIVE_GEOMETRY_EX
+        size = int.from_bytes(geo[24:32], 'little') if geo and len(geo) >= 32 else 0
+        if not 0 < size <= MAX_BYTES:
+            continue
+        name = ''
+        d = ioctl(dev, 0x2D1400, bytes(12))                    # IOCTL_STORAGE_QUERY_PROPERTY
+        if d and len(d) >= 20:
+            parts = []
+            for off in (12, 16):                                # vendor, product
+                o = int.from_bytes(d[off:off + 4], 'little')
+                if 0 < o < len(d):
+                    parts.append(d[o:].split(b'\0')[0].decode('ascii', 'replace').strip())
+            name = ' '.join(p for p in parts if p)
+        letter = letters[0]
+        lb, fb = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(64)
+        sn = wintypes.DWORD()
         label = serial = fs = ''
-        letter = letters[0] if letters else None
-        if letter:
-            lb, fb = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(64)
-            sn = ctypes.c_uint32()
-            if ctypes.windll.kernel32.GetVolumeInformationW(f'{letter}:\\', lb, 64, ctypes.byref(sn),
-                                                            None, None, fb, 64):
-                label, fs = lb.value, fb.value
-                serial = f'{sn.value >> 16:04X}-{sn.value & 0xFFFF:04X}'
-        m = Medium(rf'\\.\PhysicalDrive{d["N"]}', int(d['S']), d.get('F') or '', label, serial, fs,
-                   rf'\\.\{letter}:' if letter else None, letter=letter)
+        if k.GetVolumeInformationW(f'{letter}:\\', lb, 64, ctypes.byref(sn), None, None, fb, 64):
+            label, fs = lb.value, fb.value
+            serial = f'{sn.value >> 16:04X}-{sn.value & 0xFFFF:04X}'
+        m = Medium(dev, size, name, label, serial, fs, rf'\\.\{letter}:', letter=letter)
         res.append(m.check(len(letters)))
     return res
 

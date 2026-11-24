@@ -37,7 +37,8 @@ SD card in a USB reader.
     python3 petsd-sim.py --list-drives
     python3 petsd-sim.py --avr --sd PETSD2
 
-Only removable media up to 32 GB are listed at all. One of them can be used
+Only removable media up to 32 GB are listed at all (Windows: drive type
+"Removable", the size of the whole disk counts). One of them can be used
 if it is FAT formatted and its volume name starts with `PETSD` (any case;
 rename it in Explorer, e.g. `PETSD`, `PETSD2`, `PETSD-GAME`). `--sd` chooses
 it by 5 to 9 characters: the start of its volume name or of its volume
@@ -50,7 +51,10 @@ the launcher as `usb-<serial>.eep`.
 Windows needs administrator rights for raw disk access; the launcher asks
 for them and continues in a new console window. While the simulation runs
 the medium is locked and disappears from Explorer; close the simulation
-before pulling it. Linux: the medium must not be mounted, and you need write
+before pulling it. A medium pulled during the simulation is noticed within
+half a second: the drive reports it, opens its card-detect switch and the
+card stops answering (the PET gets a read error); restart the simulation to
+use it again. Linux: the medium must not be mounted, and you need write
 access to the device (`sudo` or group `disk`).
 
 The green BUSY LED is lit while channels are open, the red DIRTY LED shows

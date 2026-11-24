@@ -119,6 +119,9 @@ static void sd_command(void)
 
 static uint8_t sd_byte(uint8_t in)
 {
+    if (!blk_present()) {
+        return 0xff;            /* Karte gezogen: keine Antwort */
+    }
     uint8_t o = 0xff;
     if (sd_ss) {
         return 0xff;
@@ -185,6 +188,7 @@ int sd_open(const char *path, int v)
 }
 
 unsigned long sd_blocks(void) { return (unsigned long)img_blocks; }
+int sd_present(void) { return blk_present(); }
 
 void sd_select(int ss)
 {

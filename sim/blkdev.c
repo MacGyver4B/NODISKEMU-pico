@@ -16,8 +16,19 @@
 
 static const char *prefix = "blkdev";
 static int told_r, told_w;
+static int is_dev;          /* Laufwerk statt Datei */
+static int gone;            /* Laufwerk entfernt (endgueltig) */
 
 void blk_set_prefix(const char *p) { prefix = p; }
+
+static void set_gone(void)
+{
+    if (!gone) {
+        gone = 1;
+        fprintf(stderr, "%s: Karte entfernt (Laufwerk antwortet nicht mehr) - "
+                "zum Wiedereinbinden die Simulation neu starten\n", prefix);
+    }
+}
 
 #ifdef _WIN32
 #include <windows.h>
@@ -53,6 +64,7 @@ int blk_open(const char *path, uint64_t *blocks)
         *blocks = (uint64_t)sz.QuadPart / 512;
     } else if (DeviceIoControl(h, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &li, sizeof li, &n, NULL)) {
         *blocks = (uint64_t)li.Length.QuadPart / 512;
+        is_dev = 1;
     } else {
         werr(path);
         CloseHandle(h);
@@ -71,8 +83,16 @@ static int xfer(uint64_t blk, int wr)
     memset(&ov, 0, sizeof ov);
     ov.Offset = (DWORD)(blk * 512);
     ov.OffsetHigh = (DWORD)((blk * 512) >> 32);
+    if (gone) return -1;
     ok = wr ? WriteFile(h, abuf, 512, &n, &ov) : ReadFile(h, abuf, 512, &n, &ov);
     if (!ok || n != 512) {
+        DWORD e = GetLastError();
+        if (is_dev && (e == ERROR_DEVICE_NOT_CONNECTED || e == ERROR_NOT_READY ||
+                       e == ERROR_NO_SUCH_DEVICE || e == ERROR_FILE_NOT_FOUND ||
+                       e == ERROR_DEV_NOT_EXIST || e == ERROR_GEN_FAILURE)) {
+            set_gone();
+            return -1;
+        }
         int *told = wr ? &told_w : &told_r;
         if (!*told) {
             char what[64];
@@ -99,6 +119,20 @@ int blk_write(uint64_t blk, const uint8_t *d)
     return xfer(blk, 1);
 }
 
+int blk_present(void)
+{
+    static ULONGLONG next;
+    DWORD n;
+
+    if (!is_dev || gone) return !gone;
+    if (GetTickCount64() < next) return 1;
+    next = GetTickCount64() + 500;
+    if (!DeviceIoControl(h, IOCTL_STORAGE_CHECK_VERIFY2, NULL, 0, NULL, 0, &n, NULL)) {
+        set_gone();
+    }
+    return !gone;
+}
+
 void blk_close(void)
 {
     if (h != INVALID_HANDLE_VALUE) {
@@ -111,7 +145,13 @@ void blk_close(void)
 #else  /* POSIX */
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#ifdef __linux__
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+#endif
 
 static int fd = -1;
 
@@ -132,12 +172,52 @@ int blk_open(const char *path, uint64_t *blocks)
         return -1;
     }
     *blocks = (uint64_t)end / 512;
+    {
+        struct stat st;
+        is_dev = fstat(fd, &st) == 0 && S_ISBLK(st.st_mode);
+    }
     return 0;
+}
+
+static int dev_error(void)
+{
+    if (is_dev && (errno == ENODEV || errno == ENXIO || errno == EIO
+#ifdef ENOMEDIUM
+                   || errno == ENOMEDIUM
+#endif
+                   )) {
+        set_gone();
+        return 1;
+    }
+    return 0;
+}
+
+int blk_present(void)
+{
+    static struct timespec next;
+    struct timespec now;
+
+    if (!is_dev || gone) return !gone;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec < next.tv_sec || (now.tv_sec == next.tv_sec && now.tv_nsec < next.tv_nsec))
+        return 1;
+    next = now;
+    next.tv_nsec += 500000000L;
+    if (next.tv_nsec >= 1000000000L) { next.tv_sec++; next.tv_nsec -= 1000000000L; }
+#ifdef __linux__
+    {
+        uint64_t sz = 0;
+        if (ioctl(fd, BLKGETSIZE64, &sz) != 0 || sz == 0) set_gone();
+    }
+#endif
+    return !gone;
 }
 
 int blk_read(uint64_t blk, uint8_t *d)
 {
+    if (gone) return -1;
     if (pread(fd, d, 512, (off_t)(blk * 512)) != 512) {
+        if (dev_error()) return -1;
         if (!told_r) {
             fprintf(stderr, "%s: Lesen Block %llu: %s\n", prefix, (unsigned long long)blk, strerror(errno));
             told_r = 1;
@@ -149,7 +229,9 @@ int blk_read(uint64_t blk, uint8_t *d)
 
 int blk_write(uint64_t blk, const uint8_t *d)
 {
+    if (gone) return -1;
     if (pwrite(fd, d, 512, (off_t)(blk * 512)) != 512) {
+        if (dev_error()) return -1;
         if (!told_w) {
             fprintf(stderr, "%s: Schreiben Block %llu: %s\n", prefix, (unsigned long long)blk, strerror(errno));
             told_w = 1;

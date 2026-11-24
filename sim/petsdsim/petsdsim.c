@@ -297,6 +297,17 @@ static void panel_attach(void)
 
 /* nach jedem Befehl I2C, jede simulierte Millisekunde Tastenfolge,
    Protokoll, ADC7 */
+/* Kartenschalter PD5 (low = Karte da): ein gezogener USB-Stick zieht ihn hoch */
+static void card_poll(void)
+{
+    static int was = 1;
+    int now = blk_present();
+    if (now != was) {
+        was = now;
+        pin('D', 5, !now);
+    }
+}
+
 static void panel_step(void)
 {
 #ifdef PSDPANEL
@@ -444,6 +455,9 @@ static void sd_command(void)
 
 static uint8_t sd_byte(uint8_t in)
 {
+    if (!blk_present()) {
+        return 0xff;            /* Karte gezogen: keine Antwort */
+    }
     uint8_t o = 0xff;
     if (sd_ss) {
         return 0xff;
@@ -873,6 +887,7 @@ usage:
             }
             panel_step();
             ee_poll();
+            card_poll();
             if (limit_ms > 0 && sim_ps() / 1e9 >= limit_ms) {
                 break;
             }
@@ -1026,6 +1041,7 @@ usage:
             publish();
             panel_step();
             ee_poll();
+            card_poll();
         }
         done = now_ps();
         simlink_progress(sl, slot, done + 1);

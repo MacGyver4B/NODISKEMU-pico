@@ -110,6 +110,7 @@ extern "C" {
     fn simlink_others(sl: *mut SimlinkT, slot: c_int) -> c_int;
     fn sd_open(path: *const c_char, verbose: c_int) -> c_int;
     fn sd_blocks() -> std::os::raw::c_ulong;
+    fn sd_present() -> c_int;
     fn sd_select(ss: c_int);
     fn sd_xfer(b: u8) -> u8;
 }
@@ -239,7 +240,7 @@ impl Bridge {
                 }
             };
             if let Some((cd, wp)) = self.pins.sd_cd_wp {
-                put(cd, false);       // Karte steckt
+                put(cd, unsafe { sd_present() } == 0);   // low = Karte steckt
                 put(wp, false);       // nicht schreibgeschuetzt
             }
             // ATtiny25 IO_IEC = 0 sperrt den IEEE-Bus (petSD+ 2.x)
