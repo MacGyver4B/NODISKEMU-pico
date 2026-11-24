@@ -39,6 +39,7 @@
 #include "ustring.h"
 #include "wrapops.h"
 #include "d64ops.h"
+#include "menu.h"
 
 #define D41_ERROR_OFFSET 174848
 #define D71_ERROR_OFFSET 349696
@@ -218,6 +219,7 @@ static uint16_t sector_lba(uint8_t part, uint8_t track, const uint8_t sector) {
  * Calculates an offset into a D64 file from a track and sector number.
  */
 static uint32_t sector_offset(uint8_t part, uint8_t track, const uint8_t sector) {
+  lcd_note_track(part, track);          /* device view of the LCD */
   return 256L * sector_lba(part,track,sector);
 }
 

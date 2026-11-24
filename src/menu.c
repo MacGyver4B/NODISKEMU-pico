@@ -42,6 +42,7 @@
 #include "eeprom-conf.h"
 #include "rtc.h"
 #include "ustring.h"
+#include <string.h>
 #include "doscmd.h"
 #include "i2c.h"
 #include "uart.h"
@@ -51,6 +52,7 @@
 #include "fatops.h"     // pet2ascn()
 #include "doscmd.h"
 #include "multidrive.h"
+#include "d64ops.h"
 
 
 uint8_t menu_system_enabled = true;
@@ -158,7 +160,175 @@ static uint8_t lcd_put_addr(uint8_t addr) {
   return 2;
 }
 
+#if LCD_COLS >= 20 && LCD_LINES >= 4
+/* Device view: one drive per line (see docufolder nodiskemu/
+ * lcd-geraeteanzeige.md), bus name vertically in the last column:
+ *
+ *   #08:0 T018  00 OK  I
+ *   #11:0 T054  20 ERR#E      # = format glyph of the mounted image
+ *   73,NODISKEMU V1.3   E     last line: status of the current drive
+ *
+ * Bus code only notes what happened (lcd_note_track, lcd_mark_selected);
+ * the LCD is written from handle_lcd, at most every LCD_DEV_INTERVAL.
+ */
+#  define LCD_DEVVIEW
+#  define LCD_DEV_INTERVAL MS_TO_TICKS(100)
+#  define LCD_GLYPH_FIRST  2           /* CGRAM 0 = tilde, 1 = block (A02) */
+
+static uint8_t lcd_dev_track[MD_MAX_DEVICES];  /* 0: no track seen */
+static uint8_t lcd_dev_drive[MD_MAX_DEVICES];
+static volatile bool lcd_dev_dirty;
+static tick_t lcd_dev_drawn;
+
+/* format: small digit (3x5, low in the cell) = last digit of the drive
+ * model: 0 = D80 (8050), 1 = D81 (1581), 2 = D82 (8250), 4 = D64 (4040/
+ * 1541), 7 = D71 (1571); 6 = D9060 and 9 = D9090 are reserved. */
+static const PROGMEM uint8_t lcd_small_digit[10][5] = {
+  { 7, 5, 5, 5, 7 }, { 2, 6, 2, 2, 7 }, { 7, 1, 7, 4, 7 }, { 7, 1, 3, 1, 7 },
+  { 5, 5, 7, 1, 1 }, { 7, 4, 7, 1, 7 }, { 7, 4, 7, 5, 7 }, { 7, 1, 2, 2, 2 },
+  { 7, 5, 7, 5, 7 }, { 7, 5, 7, 1, 7 },
+};
+#define LCD_GLYPH_SLOTS (8 - LCD_GLYPH_FIRST)
+static uint8_t lcd_glyph_digit[LCD_GLYPH_SLOTS];   /* digit+1 per slot, 0 = free */
+static uint8_t lcd_glyph_next;
+
+/* CGRAM character showing the small digit d (loaded on demand) */
+static char lcd_small_digit_char(uint8_t d) {
+  uint8_t rows[8], i;
+  for (i = 0; i < LCD_GLYPH_SLOTS; i++)
+    if (lcd_glyph_digit[i] == d + 1)
+      return (char)(LCD_GLYPH_FIRST + i);
+  i = lcd_glyph_next;
+  lcd_glyph_next = (i + 1) % LCD_GLYPH_SLOTS;
+  rows[0] = rows[1] = 0;
+  for (uint8_t r = 0; r < 5; r++)
+    rows[2 + r] = pgm_read_byte(&lcd_small_digit[d][r]) << 1;
+  rows[7] = 0;
+  lcd_define_char(LCD_GLYPH_FIRST + i, rows);
+  lcd_glyph_digit[i] = d + 1;
+  return (char)(LCD_GLYPH_FIRST + i);
+}
+
+/* Called for every sector of a mounted image (d64ops): cheap, no LCD */
+void lcd_note_track(uint8_t part, uint8_t track) {
+  uint8_t i = md_active ? md_cur : 0;
+  if (i >= MD_MAX_DEVICES) return;
+  uint8_t drive = md_active ? md_slot_drive(part) : part;
+  if (lcd_dev_track[i] != track || lcd_dev_drive[i] != drive) {
+    lcd_dev_track[i] = track;
+    lcd_dev_drive[i] = drive;
+    lcd_dev_dirty = true;
+  }
+}
+
+static void lcd_put_dec(uint8_t v, uint8_t digits) {
+  if (digits > 2) lcd_putc('0' + v / 100);
+  lcd_putc('0' + v / 10 % 10);
+  lcd_putc('0' + v % 10);
+}
+
+/* format digit for the image on partition part, ' ' if none */
+static char lcd_format_char(uint8_t part) {
+  uint8_t d;
+  if (part >= max_part || partition[part].fop != &d64ops) return ' ';
+  switch (partition[part].imagetype & D64_TYPE_MASK) {
+  case D64_TYPE_D41: d = 4; break;
+  case D64_TYPE_D71: d = 7; break;
+  case D64_TYPE_D80: d = 0; break;
+  case D64_TYPE_D81: d = 1; break;
+  case D64_TYPE_D82: d = 2; break;
+  default: return ' ';
+  }
+  return lcd_small_digit_char(d);
+}
+
+/* one device line (19 columns) */
+static void lcd_put_device(uint8_t i) {
+  uint8_t addr, err, drive = lcd_dev_drive[i], part;
+
+  if (md_active) {
+    addr = md_dev[i].address;
+    err  = i == md_cur ? current_error : md_dev[i].err_code;
+    part = md_dev[i].slot[drive < MD_DRIVES ? drive : 0];
+    if (part == MD_NO_SLOT) part = md_dev[i].slot[0];
+  } else {
+    addr = device_address;
+    err  = current_error;
+    part = drive;
+  }
+  lcd_putc(addr == lcd_sel_addr ? (char)0xFF : '#');
+  lcd_put_dec(addr, 2);
+  lcd_putc(':');
+  lcd_putc('0' + drive);
+  lcd_putc(' ');
+  bool image = part < max_part && partition[part].fop == &d64ops;
+  if (image && lcd_dev_track[i]) {
+    lcd_putc('T');
+    lcd_put_dec(lcd_dev_track[i], 3);
+  } else {
+    lcd_puts_P(PSTR("    "));
+  }
+  lcd_puts_P(PSTR("  "));
+  lcd_put_dec(err, 2);
+  lcd_putc(' ');
+  /* 00-19 are messages, 73 is the DOS version: not an error */
+  if (err < 20 || err == 73) lcd_puts_P(PSTR("OK "));
+  else                       lcd_puts_P(PSTR("ERR"));
+  lcd_putc(image ? lcd_format_char(part) : ' ');
+}
+
+/* device order: 8..30 ascending, then the printer addresses 4..7 */
+static uint8_t lcd_dev_key(uint8_t addr) {
+  return addr >= 8 ? addr : addr + 32;
+}
+
+static void lcd_draw_devices(void) {
+  static const char PROGMEM busname[2][4] = { { 'I','E','E','E' }, { 'I','E','C',' ' } };
+  uint8_t order[MD_MAX_DEVICES], n = 0, row;
+
+  if (md_active) {
+    for (uint8_t i = 0; i < MD_MAX_DEVICES; i++) {
+      if (!md_dev[i].address) continue;
+      uint8_t j = n++;
+      while (j && lcd_dev_key(md_dev[order[j - 1]].address) > lcd_dev_key(md_dev[i].address)) {
+        order[j] = order[j - 1];
+        j--;
+      }
+      order[j] = i;
+    }
+  } else {
+    order[n++] = 0;
+  }
+
+  for (row = 0; row < LCD_LINES; row++) {
+    lcd_locate(0, row);
+    if (row < n && (row < LCD_LINES - 1 || n >= LCD_LINES)) {
+      lcd_put_device(order[row]);
+    } else if (row == LCD_LINES - 1) {
+      /* free last line: status text of the current drive */
+      bool visible = true;
+      for (uint8_t i = 0; i < LCD_COLS - 1; i++) {
+        if (i >= CONFIG_ERROR_BUFFER_SIZE || error_buffer[i] == 13) visible = false;
+        lcd_putc(visible ? error_buffer[i] : ' ');
+      }
+    } else {
+      for (uint8_t i = 0; i < LCD_COLS - 1; i++) lcd_putc(' ');
+    }
+    lcd_locate(LCD_COLS - 1, row);
+    lcd_putc(row < 4 ? pgm_read_byte(&busname[active_bus == IEC][row]) : ' ');
+  }
+  lcd_dev_dirty = false;
+  lcd_dev_drawn = getticks();
+}
+#else
+void lcd_note_track(uint8_t part, uint8_t track) { (void)part; (void)track; }
+#endif
+
 void lcd_update_device_addr(void) {
+#ifdef LCD_DEVVIEW
+  lcd_dev_dirty = true;
+  return;
+#endif
   if (lcd_current_screen == SCRN_STATUS) {
     lcd_home();
 #ifdef CONFIG_MULTIDRIVE
@@ -185,6 +355,10 @@ void lcd_update_device_addr(void) {
 
 void lcd_update_disk_status(void) {
   bool visible = true;
+#ifdef LCD_DEVVIEW
+  lcd_dev_dirty = true;
+  return;
+#endif
 
   if (lcd_current_screen == SCRN_STATUS) {
     lcd_locate(0, 1);
@@ -211,6 +385,9 @@ void lcd_draw_screen(uint16_t screen) {
   case SCRN_SPLASH:
 #if (CONFIG_HARDWARE_VARIANT == HW_PETSDPLUS || defined(PSD2_BOARD_DIP40)) && LCD_COLS >= 8 && LCD_LINES >= 4
     lcd_load_custom_chars_P(&petsd_logo[0][0]);
+#ifdef LCD_DEVVIEW
+    memset(lcd_glyph_digit, 0, sizeof(lcd_glyph_digit));  /* logo overwrote them */
+#endif
     lcd_locate((LCD_COLS - 8) / 2 + 3, 0);
     for (uint8_t i = 0; i < 4; i++) lcd_putc(i);
     lcd_putc('+');
@@ -231,6 +408,10 @@ void lcd_draw_screen(uint16_t screen) {
     break;
 
   case SCRN_STATUS:
+#ifdef LCD_DEVVIEW
+    lcd_draw_devices();
+    break;
+#endif
     lcd_locate(16, 0);
     if (active_bus == IEC)     lcd_puts_P(PSTR(" IEC"));
     if (active_bus == IEEE488) lcd_puts_P(PSTR("IEEE"));
@@ -268,6 +449,12 @@ void handle_lcd(void) {
     ticks = getticks();
     if (time_before(lcd_timeout, ticks)) menu_select_status();
   }
+
+#ifdef LCD_DEVVIEW
+  if (lcd_current_screen == SCRN_STATUS && !lcd_timer && lcd_dev_dirty &&
+      time_after(getticks(), lcd_dev_drawn + LCD_DEV_INTERVAL))
+    lcd_draw_devices();
+#endif
 
   /* inverted address: follow the bus, clear 1 s after the last access */
   if (lcd_sel_changed) {
