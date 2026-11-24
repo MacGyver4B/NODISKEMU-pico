@@ -199,18 +199,6 @@ void lcd_load_custom_chars_P(const uint8_t *glyphs) {
 }
 
 
-/* Load one 5x8 CGRAM character (slot 0..7) from 8 bytes in RAM. */
-void lcd_set_char(uint8_t slot, const uint8_t *rows) {
-  uint8_t x = lcd_x, y = lcd_y;
-
-  lcd_send_command(0x40 | ((slot & 7) << 3));
-  lcd_set_data_mode();
-  for (uint8_t i = 0; i < 8; i++)
-    lcd_write(rows[i] & 0x1f);
-  lcd_locate(x, y);       // Restore DDRAM addressing and cursor position
-}
-
-
 void lcd_cursor(bool on) {
   lcd_send_command(on ? 0x0F : 0x0C);
 }

@@ -31,8 +31,8 @@ EEPROM file next to the card (`mycard.eep`).
 
 The green BUSY LED is lit while channels are open, the red DIRTY LED shows
 unwritten data or blinks on an error, as on the board. While the PET
-accesses a drive, its address is shown inverted on the status screen, until
-1 s after the last access (firmware of this branch; the official NODISKEMU
+accesses a drive, the `#` in front of its address on the status screen
+becomes a full block, until 1 s after the last access (firmware of this branch; the official NODISKEMU
 shows it normally).
 
 Panel: click the buttons, or use ←/→/Enter on the page (PREV/NEXT/SELECT).
