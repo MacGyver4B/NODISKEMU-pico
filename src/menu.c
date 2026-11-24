@@ -182,22 +182,19 @@ static tick_t lcd_dev_drawn;
 
 /* format: small digit (3x5, rows 1-5 of the cell) = last digit of the drive
  * model: 0 = D80 (8050), 1 = D81 (1581), 2 = D82 (8250), 4 = D64 (4040/
- * 1541), 7 = D71 (1571); 6 = D9060 and 9 = D9090 are reserved.
+ * 1541), 7 = D71 (1571); 6 = D9060 and 9 = D9090 if they ever come.
  * Not Commodore formats: small P = DNP, small F = FAT directory. */
-/* 5 rows each (cell rows 1-5), drawn by Stefan; 3, 5, 6, 8, 9 to match */
-static const PROGMEM uint8_t lcd_small_digit[12][5] = {
-  { 0x04, 0x0a, 0x0a, 0x0a, 0x04 },   /* 0 */
-  { 0x04, 0x04, 0x04, 0x04, 0x04 },   /* 1 */
-  { 0x0e, 0x02, 0x06, 0x08, 0x0e },   /* 2 */
-  { 0x0e, 0x02, 0x06, 0x02, 0x0e },   /* 3 */
-  { 0x0a, 0x0a, 0x0e, 0x02, 0x02 },   /* 4 */
-  { 0x0e, 0x08, 0x0e, 0x02, 0x0e },   /* 5 */
-  { 0x0e, 0x08, 0x0e, 0x0a, 0x0e },   /* 6 */
-  { 0x0e, 0x02, 0x04, 0x04, 0x04 },   /* 7 */
-  { 0x0e, 0x0a, 0x0e, 0x0a, 0x0e },   /* 8 */
-  { 0x0e, 0x0a, 0x0e, 0x02, 0x0e },   /* 9 */
-  { 0x0c, 0x0a, 0x0c, 0x08, 0x08 },   /* 10: P = DNP (CMD partition) */
-  { 0x0e, 0x08, 0x0e, 0x08, 0x08 },   /* 11: F = FAT, no image      */
+/* 5 rows each (cell rows 1-5), drawn by Stefan. Only the characters
+ * needed are defined: CGRAM has just 6 free places, loaded on demand. */
+enum { LG_0, LG_1, LG_2, LG_4, LG_7, LG_P, LG_F, LG_COUNT };
+static const PROGMEM uint8_t lcd_small_digit[LG_COUNT][5] = {
+  { 0x04, 0x0a, 0x0a, 0x0a, 0x04 },   /* 0 = D80 */
+  { 0x04, 0x04, 0x04, 0x04, 0x04 },   /* 1 = D81 */
+  { 0x0c, 0x02, 0x06, 0x08, 0x0e },   /* 2 = D82 */
+  { 0x0a, 0x0a, 0x0e, 0x02, 0x02 },   /* 4 = D64 */
+  { 0x0e, 0x02, 0x04, 0x04, 0x04 },   /* 7 = D71 */
+  { 0x0c, 0x0a, 0x0c, 0x08, 0x08 },   /* P = DNP (CMD partition) */
+  { 0x0e, 0x08, 0x0e, 0x08, 0x08 },   /* F = FAT, no image */
 };
 #define LCD_GLYPH_SLOTS (8 - LCD_GLYPH_FIRST)
 static uint8_t lcd_glyph_digit[LCD_GLYPH_SLOTS];   /* glyph+1 per slot, 0 = free */
@@ -241,15 +238,15 @@ static void lcd_put_dec(uint8_t v, uint8_t digits) {
 static char lcd_format_char(uint8_t part) {
   uint8_t d;
   if (part >= max_part) return ' ';
-  if (partition[part].fop == &fatops) return lcd_small_digit_char(11);
+  if (partition[part].fop == &fatops) return lcd_small_digit_char(LG_F);
   if (partition[part].fop != &d64ops) return ' ';
   switch (partition[part].imagetype & D64_TYPE_MASK) {
-  case D64_TYPE_DNP: d = 10; break;
-  case D64_TYPE_D41: d = 4; break;
-  case D64_TYPE_D71: d = 7; break;
-  case D64_TYPE_D80: d = 0; break;
-  case D64_TYPE_D81: d = 1; break;
-  case D64_TYPE_D82: d = 2; break;
+  case D64_TYPE_DNP: d = LG_P; break;
+  case D64_TYPE_D41: d = LG_4; break;
+  case D64_TYPE_D71: d = LG_7; break;
+  case D64_TYPE_D80: d = LG_0; break;
+  case D64_TYPE_D81: d = LG_1; break;
+  case D64_TYPE_D82: d = LG_2; break;
   default: return ' ';
   }
   return lcd_small_digit_char(d);
