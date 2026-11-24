@@ -127,12 +127,12 @@ static inline uint8_t min(uint8_t a, uint8_t b) {
 /* The address of the drive the computer addressed last (LISTEN or TALK)
  * is shown inverted on the status screen. The HD44780 cannot invert, so
  * '#' and the digits are copied into CGRAM slots 5..7 with all dots
- * flipped. It stays inverted until another drive is addressed or the bus
- * has been quiet for LCD_SEL_TIMEOUT. Glyphs from the A00/A02 ROM (equal
- * for these characters).
+ * flipped. Every access keeps it inverted for another LCD_SEL_TIMEOUT, so
+ * it works as an activity light per drive; another drive takes over at
+ * once. Glyphs from the A00/A02 ROM (equal for these characters).
  */
 #define LCD_SEL_SLOT     5
-#define LCD_SEL_TIMEOUT  MS_TO_TICKS(60000)
+#define LCD_SEL_TIMEOUT  MS_TO_TICKS(1000)
 
 static const PROGMEM uint8_t lcd_digit_glyphs[11][7] = {
   {0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a},   // '#'
@@ -297,7 +297,7 @@ void handle_lcd(void) {
     if (time_before(lcd_timeout, ticks)) menu_select_status();
   }
 
-  /* inverted address: follow the bus, clear after a quiet minute */
+  /* inverted address: follow the bus, clear 1 s after the last access */
   if (lcd_sel_changed) {
     lcd_sel_changed = false;
     lcd_sel_addr = lcd_sel_new;
