@@ -31,6 +31,9 @@
 #include "config.h"
 
 
+/* bytes kept when reading along with another drive (ieee.c) */
+#define LCD_SNIFF_MAX 40
+
 enum {
   SCRN_SPLASH = 1,      // Software version info, hardware name
   SCRN_STATUS           // Disk status, device number, clock
@@ -47,6 +50,8 @@ void lcd_refresh(void);
 void lcd_update_device_addr(void);
 void lcd_mark_selected(uint8_t addr);
 void lcd_note_track(uint8_t part, uint8_t track);
+void lcd_foreign_reset(void);
+void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n);
 void lcd_update_disk_status(void);
 void handle_lcd(void);
 bool handle_buttons(void);
@@ -70,6 +75,8 @@ static inline void lcd_refresh(void) {}
 static inline void lcd_update_device_addr(void) {}
 static inline void lcd_mark_selected(uint8_t addr) { (void)addr; }
 static inline void lcd_note_track(uint8_t part, uint8_t track) { (void)part; (void)track; }
+static inline void lcd_foreign_reset(void) {}
+static inline void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) { (void)dev; (void)talk; (void)sa; (void)open; (void)buf; (void)n; }
 static inline void handle_lcd(void) {}
 static inline bool handle_buttons(void) { return false; }
 static inline void lcd_update_disk_status(void) {}

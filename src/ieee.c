@@ -834,11 +834,47 @@ void ieee488_ProcessIFC(void) {
   free_multiple_buffers(FMB_USER_CLEAN);
   ieee488_Init();
   read_configuration();
+  lcd_foreign_reset();                  // other drives are reset as well
   lcd_clear();
   lcd_puts_P(PSTR("IFC: interface clear"));
   set_error(ERROR_DOSVERSION);
   while(!ieee488_IFC());
   lcd_draw_screen(SCRN_STATUS);
+}
+
+
+/* ------------------------------------------------------------------------- */
+/*  Listening in on other drives (LCD device view)                           */
+/* ------------------------------------------------------------------------- */
+
+/* An address without a drive of ours is passed through to the IEEE bus.
+ * To show what the computer does with such a drive, the data bytes of its
+ * OPEN phase (file name) and of channel 15 (command, status) are read
+ * along - strictly passively: NRFD and NDAC stay released, the handshake
+ * is done by the other drive alone. Data channels are not read at all, at
+ * most LCD_SNIFF_MAX bytes are taken, any ATN ends it at once. A missed
+ * byte only costs a display detail. */
+static uint8_t sniff_dev;                 // other drive addressed, 0 = none
+static bool    sniff_talk;                // ... as talker
+
+static void ieee488_Sniff(uint8_t sa, bool open) {
+  uint8_t buf[LCD_SNIFF_MAX], n = 0;
+
+  ieee488_BusIdleUnlessAtn();             // never hold the handshake
+  for (;;) {
+    while (ieee488_DAV()) {               // wait for DAV low
+      if (ieee488_ATN_received || !ieee488_ATN() || ieee488_CheckIFC())
+        goto done;
+    }
+    buf[n++] = ieee488_Data();
+    if (n == sizeof(buf)) goto done;      // enough: back to work at once
+    while (!ieee488_DAV()) {              // wait for DAV high
+      if (ieee488_ATN_received || ieee488_CheckIFC())
+        goto done;
+    }
+  }
+done:
+  lcd_sniffed(sniff_dev, sniff_talk, sa, open, buf, n);
 }
 
 
@@ -938,6 +974,8 @@ void handle_ieee488(void) {
       relay_talk_pending = false;
       ieee488_ListenActive = false;
       ieee488_TalkingDevice = 0;
+      sniff_dev = Device;                 // maybe an IEEE drive: read along
+      sniff_talk = cmd3 == IEEE_TALK;
       continue;
     }
     if (cmd3 == IEEE_LISTEN && Device == relay_ieee_unit) {
@@ -968,11 +1006,18 @@ void handle_ieee488(void) {
       continue;
     }
 #endif
-    if (cmd == IEEE_UNLISTEN)             // UNLISTEN
+    if (cmd == IEEE_UNLISTEN) {           // UNLISTEN
+      sniff_dev = 0;
       ieee488_Unlisten();
-    else if (cmd == IEEE_UNTALK)          // UNTALK
+    } else if (cmd == IEEE_UNTALK) {      // UNTALK
+      sniff_dev = 0;
       ieee488_Untalk();
-    else if (cmd3 == IEEE_LISTEN) {       // LISTEN
+    } else if (cmd3 == IEEE_LISTEN) {     // LISTEN
+      sniff_dev = 0;
+      if ((dev = md_find(Device)) == MD_NO_DEVICE) {
+        sniff_dev = Device;               // another drive: read along
+        sniff_talk = false;
+      }
       if ((dev = md_find(Device)) != MD_NO_DEVICE) {
         md_select(dev);
         lcd_mark_selected(Device);
@@ -983,6 +1028,11 @@ void handle_ieee488(void) {
         ieee488_TalkingDevice = 0;
       }
     } else if (cmd3 == IEEE_TALK) {       // TALK
+      sniff_dev = 0;
+      if (md_find(Device) == MD_NO_DEVICE) {
+        sniff_dev = Device;               // another drive talks
+        sniff_talk = true;
+      }
       if ((dev = md_find(Device)) != MD_NO_DEVICE) {
         md_select(dev);
         lcd_mark_selected(Device);
@@ -1000,6 +1050,9 @@ void handle_ieee488(void) {
       } else if (ieee488_TalkingDevice) {
         printf("DTA T %d\r\n", sa);
         ieee488_TalkLoop(sa);
+      } else if (sniff_dev && sa == 15) {   // command or status only
+        ieee488_Sniff(sa, false);
+        return;
       }
     } else if (cmd4 == IEEE_CLOSE) {      // CLOSE
       if (ieee488_ListenActive) {
@@ -1024,6 +1077,9 @@ void handle_ieee488(void) {
         open_active = true;
         open_sa = sa;
         ieee488_ListenLoop(LL_OPEN, sa);
+      } else if (sniff_dev && !sniff_talk) {
+        ieee488_Sniff(sa, true);
+        return;
       }
     } else {
       uart_puts_P(PSTR("UKN\r\n"));

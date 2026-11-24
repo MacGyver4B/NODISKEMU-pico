@@ -367,6 +367,146 @@ status:
   lcd_putc(lcd_format_char(part));
 }
 
+/* ---- other drives on the IEEE bus (passed through, read along) ---- */
+#  define LCD_FOREIGN_FIRST 4
+#  define LCD_FOREIGN_COUNT 27            /* addresses 4..30 */
+
+static struct {
+  uint8_t seen;                           /* data seen: the drive is there */
+  uint8_t drive;
+  uint8_t maxtrack;
+  uint8_t pending;                        /* track of a U1/B-R, counted once
+                                             the status shows no error */
+  char    type[4];                        /* "8250", "8?50", ... or 0 */
+} lcd_fdev[LCD_FOREIGN_COUNT];
+
+static uint8_t lcd_num(const uint8_t **p, const uint8_t *end) {
+  uint8_t v = 0;
+  while (*p < end && (**p < '0' || **p > '9')) (*p)++;
+  while (*p < end && **p >= '0' && **p <= '9') v = v * 10 + (*(*p)++ - '0');
+  return v;
+}
+
+static void lcd_ftype(uint8_t f, const char *t) {
+  memcpy(lcd_fdev[f].type, t, 4);
+}
+
+/* type from the highest track if nothing better is known */
+static void lcd_ftrack(uint8_t f, uint8_t track) {
+  char *t = lcd_fdev[f].type;
+  if (track <= lcd_fdev[f].maxtrack) return;
+  lcd_fdev[f].maxtrack = track;
+  if (track > 77)
+    lcd_ftype(f, "8250");                 /* also SFD 1001: same format */
+  else if (track > 35 && (!t[0] || t[1] == '?' || t[0] != '8'))
+    lcd_ftype(f, "8?50");
+}
+
+/* forget the other drives (reset of the computer) */
+void lcd_foreign_reset(void) {
+  memset(lcd_fdev, 0, sizeof(lcd_fdev));
+  lcd_dev_dirty = true;
+}
+
+/* Called from ieee.c after reading along with another drive */
+void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) {
+  const uint8_t *p = buf, *end = buf + n;
+  uint8_t f;
+
+  if (dev < LCD_FOREIGN_FIRST || dev >= LCD_FOREIGN_FIRST + LCD_FOREIGN_COUNT || !n)
+    return;
+  f = dev - LCD_FOREIGN_FIRST;
+  lcd_fdev[f].seen = 1;
+  lcd_mark_selected(dev);
+
+  if (talk) {
+    /* error channel: "NN,TEXT,TT,SS" - after a reset 73 with the DOS */
+    if (sa != 15 || n < 2) goto out;
+    uint8_t code = (buf[0] - '0') * 10 + (buf[1] - '0');
+    if (code == 73) {
+      /* a model number in the text wins, otherwise the DOS version */
+      for (const uint8_t *q = buf; q + 4 <= end; q++)
+        if (q[0] >= '1' && q[0] <= '9' && q[1] >= '0' && q[1] <= '9' &&
+            q[2] >= '0' && q[2] <= '9' && q[3] >= '0' && q[3] <= '9') {
+          lcd_ftype(f, (const char *)q);
+          goto out;
+        }
+      for (const uint8_t *q = buf; q + 3 <= end; q++)
+        if (q[0] == 'V' && q[1] >= '1' && q[1] <= '3') {
+          if (q[2] != '.') { lcd_ftype(f, q[1] == '1' ? "2040" : "4040"); break; }
+          if (q[1] == '1')                    lcd_ftype(f, "2040");
+          else if (q[3] == '0' || q[3] == '1') lcd_ftype(f, "4040");
+          else if (q[3] == '5')               lcd_ftype(f, "8050");
+          else if (q[3] == '6')               lcd_ftype(f, "2031");
+          else if (q[3] == '7')               lcd_ftype(f, "8?50");
+          else if (q[1] == '3')               lcd_ftype(f, "9060");
+          break;
+        }
+    } else if (code < 20) {
+      /* no error: the track of the last block command exists */
+      if (lcd_fdev[f].pending) lcd_ftrack(f, lcd_fdev[f].pending);
+    }
+    lcd_fdev[f].pending = 0;              /* after an error: forget it */
+    goto out;
+  }
+
+  (void)open;                             /* OPEN 15 carries a command too */
+  if (sa != 15) {
+    /* file name: "$1", "1:NAME", "@0:NAME" */
+    lcd_fdev[f].drive = 0;
+    if (n >= 2 && buf[0] == '$' && (buf[1] == '0' || buf[1] == '1'))
+      lcd_fdev[f].drive = buf[1] - '0';
+    for (; p < end; p++)
+      if (*p == ':') {
+        if (p > buf && (p[-1] == '0' || p[-1] == '1')) lcd_fdev[f].drive = p[-1] - '0';
+        break;
+      }
+    goto out;
+  }
+
+  /* command channel */
+  if ((buf[0] == 'U' && n > 1 && (buf[1] == '1' || buf[1] == '2' || buf[1] == 'A' || buf[1] == 'B')) ||
+      (buf[0] == 'B' && n > 2 && buf[1] == '-' && (buf[2] == 'R' || buf[2] == 'W'))) {
+    p = buf + 2;                          /* U1:ch,dr,t,s  B-R ch dr t s */
+    lcd_num(&p, end);
+    uint8_t d = lcd_num(&p, end);
+    uint8_t t = lcd_num(&p, end);
+    if (d <= 1) lcd_fdev[f].drive = d;
+    lcd_fdev[f].pending = t;              /* a probe may ask for a track
+                                             the drive does not have */
+  } else if (n > 1 && (buf[1] == '0' || buf[1] == '1')) {
+    lcd_fdev[f].drive = buf[1] - '0';     /* I1, N1:..., S0:... */
+  }
+out:
+  lcd_dev_dirty = true;
+}
+
+/* format character from the type of another drive */
+static char lcd_ftype_char(uint8_t f) {
+  const char *t = lcd_fdev[f].type;
+  if (!t[0] || t[1] == '?') return ' ';
+  if (!memcmp(t, "8250", 4) || !memcmp(t, "1001", 4)) return lcd_small_digit_char(LG_2);
+  if (!memcmp(t, "8050", 4)) return lcd_small_digit_char(LG_0);
+  if (!memcmp(t, "1571", 4)) return lcd_small_digit_char(LG_7);
+  if (!memcmp(t, "1581", 4)) return lcd_small_digit_char(LG_1);
+  if (!memcmp(t, "4040", 4) || !memcmp(t, "2031", 4) || !memcmp(t, "4031", 4) ||
+      !memcmp(t, "1541", 4)) return lcd_small_digit_char(LG_4);
+  return ' ';
+}
+
+/* "#08:1 488 8250    ²" (19 columns) */
+static void lcd_put_foreign(uint8_t addr) {
+  uint8_t f = addr - LCD_FOREIGN_FIRST;
+  lcd_putc(addr == lcd_sel_addr ? (char)0xFF : '#');
+  lcd_put_dec(addr, 2);
+  lcd_putc(':');
+  lcd_putc('0' + lcd_fdev[f].drive);
+  lcd_puts_P(PSTR(" 488 "));
+  for (uint8_t k = 0; k < 4; k++) lcd_putc(lcd_fdev[f].type[0] ? lcd_fdev[f].type[k] : ' ');
+  lcd_puts_P(PSTR("    "));
+  lcd_putc(lcd_ftype_char(f));
+}
+
 static const char PROGMEM lcd_busname[2][4] = { { 'I','E','E','E' }, { 'I','E','C',' ' } };
 
 /* follow the directories of all FAT drives; true if one changed */
@@ -423,6 +563,8 @@ static void lcd_draw_devices(void) {
     i = md_active ? md_find(addr) : (addr == device_address ? 0 : MD_NO_DEVICE);
     if (i != MD_NO_DEVICE && i < MD_MAX_DEVICES) {
       lcd_put_device(i);
+    } else if (active_bus == IEEE488 && lcd_fdev[addr - LCD_FOREIGN_FIRST].seen) {
+      lcd_put_foreign(addr);
     } else {
       /* no drive of ours: address only */
       lcd_putc('#');
@@ -437,6 +579,10 @@ static void lcd_draw_devices(void) {
 }
 #else
 void lcd_note_track(uint8_t part, uint8_t track) { (void)part; (void)track; }
+void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) {
+  (void)dev; (void)talk; (void)sa; (void)open; (void)buf; (void)n;
+}
+void lcd_foreign_reset(void) {}
 #endif
 
 void lcd_update_device_addr(void) {
