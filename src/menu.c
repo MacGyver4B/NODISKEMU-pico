@@ -234,6 +234,69 @@ static void lcd_put_dec(uint8_t v, uint8_t digits) {
   lcd_putc('0' + v % 10);
 }
 
+/* ---- path of the current drive (FAT only) ---- */
+#  define LCD_PATH_MAX   64             /* longer paths lose their beginning */
+#  define LCD_PATH_COLS  (LCD_COLS - 8) /* "#nn:d" + path + ' ' + format + bus */
+#  define LCD_SCROLL_STEP  MS_TO_TICKS(330)
+#  define LCD_SCROLL_PAUSE MS_TO_TICKS(2000)
+
+static char     lcd_path[LCD_PATH_MAX + 1];
+static uint8_t  lcd_path_len;            /* 0: no path (not a FAT drive) */
+static uint8_t  lcd_path_part = 0xff;
+static uint32_t lcd_path_clu;
+static uint8_t  lcd_path_off;            /* scroll position */
+static bool     lcd_path_shown;          /* last line free for the path */
+static tick_t   lcd_path_next;
+
+/* put "/name" in front of the path built from the end of buf */
+static uint8_t lcd_path_prepend(char *buf, uint8_t pos, const uint8_t *name) {
+  uint8_t n = ustrlen(name);
+  if (pos < n + 1) return 0;             /* full: keep the end */
+  pos -= n;
+  memcpy(buf + pos, name, n);
+  buf[--pos] = '/';
+  return pos;
+}
+
+/* Build the path of directory clu on partition part, walking up the ".."
+ * entries like fat_getdirlabel. Only called from handle_lcd (main loop). */
+static void lcd_build_path(uint8_t part, uint32_t clu) {
+  char buf[LCD_PATH_MAX + 1];
+  uint8_t pos = LCD_PATH_MAX, depth = 0;
+  uint8_t lfn[_MAX_LFN_LENGTH + 1];
+  FATFS *fs = partition[part].fatfs;
+  DIR dh;
+  FILINFO fi;
+
+  buf[pos] = 0;
+  fi.lfn = lfn;
+  while (clu && depth++ < 16 && pos) {
+    uint32_t parent = 0;
+    bool found = false;
+    /* ".." of this directory gives the parent */
+    if (l_opendir(fs, clu, &dh) != FR_OK) break;
+    while (f_readdir(&dh, &fi) == FR_OK && fi.fname[0] == '.') {
+      if (fi.fname[1] == '.' && fi.fname[2] == 0) { parent = fi.clust; break; }
+    }
+    /* the parent's entry pointing to clu gives the name */
+    if (l_opendir(fs, parent, &dh) != FR_OK) break;
+    while (f_readdir(&dh, &fi) == FR_OK && fi.fname[0]) {
+      if ((fi.fattrib & AM_DIR) && fi.clust == clu && fi.fname[0] != '.') {
+        uint8_t p = lcd_path_prepend(buf, pos, lfn[0] ? lfn : fi.fname);
+        if (!p) { pos = 0; break; }
+        pos = p;
+        found = true;
+        break;
+      }
+    }
+    if (!found) break;
+    clu = parent;
+  }
+  if (pos == LCD_PATH_MAX) buf[--pos] = '/';  /* root */
+  ustrcpy((uint8_t *)lcd_path, (uint8_t *)buf + pos);
+  lcd_path_len = ustrlen((uint8_t *)lcd_path);
+}
+
 /* format character for partition part, ' ' if unknown */
 static char lcd_format_char(uint8_t part) {
   uint8_t d;
@@ -252,21 +315,26 @@ static char lcd_format_char(uint8_t part) {
   return lcd_small_digit_char(d);
 }
 
+/* partition of the last used drive of device i; no fallback to drive 0:
+   a drive without a mapping shows neither track nor format */
+static uint8_t lcd_dev_part(uint8_t i) {
+  uint8_t drive = lcd_dev_drive[i];
+  if (!md_active) return drive;
+  return drive < MD_DRIVES ? md_dev[i].slot[drive] : MD_NO_SLOT;
+}
+
+static uint8_t lcd_dev_addr(uint8_t i) {
+  return md_active ? md_dev[i].address : device_address;
+}
+
 /* one device line (19 columns) */
 static void lcd_put_device(uint8_t i) {
-  uint8_t addr, err, drive = lcd_dev_drive[i], part;
+  uint8_t addr = lcd_dev_addr(i), err, drive = lcd_dev_drive[i], part = lcd_dev_part(i);
 
-  if (md_active) {
-    addr = md_dev[i].address;
-    err  = i == md_cur ? current_error : md_dev[i].err_code;
-    /* no fallback to drive 0 here: a drive without a mapping shows
-       neither track nor format */
-    part = drive < MD_DRIVES ? md_dev[i].slot[drive] : MD_NO_SLOT;
-  } else {
-    addr = device_address;
-    err  = current_error;
-    part = drive;
-  }
+  if (md_active)
+    err = i == md_cur ? current_error : md_dev[i].err_code;
+  else
+    err = current_error;
   lcd_putc(addr == lcd_sel_addr ? (char)0xFF : '#');
   lcd_put_dec(addr, 2);
   lcd_putc(':');
@@ -278,9 +346,17 @@ static void lcd_put_device(uint8_t i) {
     lcd_putc('T');
     lcd_put_dec(lcd_dev_track[i], 3);
   } else if (mapped && partition[part].fop == &fatops) {
-    /* root "/"; names of subdirectories follow with the path line */
-    if (partition[part].current_dir.fat == 0) lcd_puts_P(PSTR("/    "));
-    else                                      lcd_puts_P(PSTR("/..  "));
+    /* last directory name, as far as known (path of the current drive) */
+    if (partition[part].current_dir.fat == 0) {
+      lcd_puts_P(PSTR("/    "));
+    } else if (part == lcd_path_part && lcd_path_len) {
+      const char *last = lcd_path + lcd_path_len;
+      while (last > lcd_path && last[-1] != '/') last--;
+      lcd_putc('/');
+      for (uint8_t k = 0; k < 4; k++) lcd_putc(*last ? *last++ : ' ');
+    } else {
+      lcd_puts_P(PSTR("/..  "));
+    }
   } else {
     lcd_puts_P(PSTR("     "));
   }
@@ -293,15 +369,54 @@ static void lcd_put_device(uint8_t i) {
   lcd_putc(lcd_format_char(part));
 }
 
+static const char PROGMEM lcd_busname[2][4] = { { 'I','E','E','E' }, { 'I','E','C',' ' } };
+
+/* last line: "#nn:d" + path window + format + bus */
+static void lcd_draw_path_line(void) {
+  uint8_t i = md_active ? md_cur : 0, row = LCD_LINES - 1;
+  lcd_locate(0, row);
+  lcd_putc('#');
+  lcd_put_dec(lcd_dev_addr(i), 2);
+  lcd_putc(':');
+  lcd_putc('0' + lcd_dev_drive[i]);
+  for (uint8_t k = 0; k < LCD_PATH_COLS; k++) {
+    uint8_t c = lcd_path_off + k;
+    lcd_putc(c < lcd_path_len ? lcd_path[c] : ' ');
+  }
+  lcd_putc(' ');
+  lcd_putc(lcd_format_char(lcd_path_part));
+  lcd_putc(row < 4 ? pgm_read_byte(&lcd_busname[active_bus == IEC][row]) : ' ');
+}
+
+/* follow the current drive; returns true if the path text changed */
+static bool lcd_path_update(void) {
+  uint8_t i = md_active ? md_cur : 0, part = lcd_dev_part(i);
+  if (part >= max_part || partition[part].fop != &fatops) {
+    if (!lcd_path_len) return false;
+    lcd_path_len = 0;
+    lcd_path_part = 0xff;
+    return true;
+  }
+  if (part == lcd_path_part && partition[part].current_dir.fat == lcd_path_clu && lcd_path_len)
+    return false;
+  lcd_path_part = part;
+  lcd_path_clu  = partition[part].current_dir.fat;
+  lcd_build_path(part, lcd_path_clu);
+  lcd_path_off  = 0;
+  lcd_path_next = getticks() + LCD_SCROLL_PAUSE;
+  return true;
+}
+
 /* device order: 8..30 ascending, then the printer addresses 4..7 */
 static uint8_t lcd_dev_key(uint8_t addr) {
   return addr >= 8 ? addr : addr + 32;
 }
 
 static void lcd_draw_devices(void) {
-  static const char PROGMEM busname[2][4] = { { 'I','E','E','E' }, { 'I','E','C',' ' } };
   uint8_t order[MD_MAX_DEVICES], n = 0, row;
 
+  lcd_path_update();
+  lcd_path_shown = false;
   if (md_active) {
     for (uint8_t i = 0; i < MD_MAX_DEVICES; i++) {
       if (!md_dev[i].address) continue;
@@ -320,8 +435,12 @@ static void lcd_draw_devices(void) {
     lcd_locate(0, row);
     if (row < n && (row < LCD_LINES - 1 || n >= LCD_LINES)) {
       lcd_put_device(order[row]);
+    } else if (row == LCD_LINES - 1 && lcd_path_len) {
+      lcd_path_shown = true;
+      lcd_draw_path_line();
+      continue;
     } else if (row == LCD_LINES - 1) {
-      /* free last line: status text of the current drive */
+      /* free last line, no FAT drive: status text of the current drive */
       bool visible = true;
       for (uint8_t i = 0; i < LCD_COLS - 1; i++) {
         if (i >= CONFIG_ERROR_BUFFER_SIZE || error_buffer[i] == 13) visible = false;
@@ -331,7 +450,7 @@ static void lcd_draw_devices(void) {
       for (uint8_t i = 0; i < LCD_COLS - 1; i++) lcd_putc(' ');
     }
     lcd_locate(LCD_COLS - 1, row);
-    lcd_putc(row < 4 ? pgm_read_byte(&busname[active_bus == IEC][row]) : ' ');
+    lcd_putc(row < 4 ? pgm_read_byte(&lcd_busname[active_bus == IEC][row]) : ' ');
   }
   lcd_dev_dirty = false;
   lcd_dev_drawn = getticks();
@@ -467,9 +586,25 @@ void handle_lcd(void) {
   }
 
 #ifdef LCD_DEVVIEW
-  if (lcd_current_screen == SCRN_STATUS && !lcd_timer && lcd_dev_dirty &&
-      time_after(getticks(), lcd_dev_drawn + LCD_DEV_INTERVAL))
-    lcd_draw_devices();
+  if (lcd_current_screen == SCRN_STATUS && !lcd_timer) {
+    if (lcd_path_update())
+      lcd_dev_dirty = true;
+    if (lcd_dev_dirty && time_after(getticks(), lcd_dev_drawn + LCD_DEV_INTERVAL)) {
+      lcd_draw_devices();
+    } else if (lcd_path_shown && lcd_path_len > LCD_PATH_COLS &&
+               time_after(getticks(), lcd_path_next)) {
+      /* scroll a long path: pause at both ends */
+      uint8_t last = lcd_path_len - LCD_PATH_COLS;
+      if (lcd_path_off >= last) {
+        lcd_path_off = 0;
+        lcd_path_next = getticks() + LCD_SCROLL_PAUSE;
+      } else {
+        lcd_path_off++;
+        lcd_path_next = getticks() + (lcd_path_off == last ? LCD_SCROLL_PAUSE : LCD_SCROLL_STEP);
+      }
+      lcd_draw_path_line();
+    }
+  }
 #endif
 
   /* inverted address: follow the bus, clear 1 s after the last access */
