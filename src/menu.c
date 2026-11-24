@@ -180,16 +180,27 @@ static uint8_t lcd_dev_drive[MD_MAX_DEVICES];
 static volatile bool lcd_dev_dirty;
 static tick_t lcd_dev_drawn;
 
-/* format: small digit (3x5, low in the cell) = last digit of the drive
+/* format: small digit (3x5, rows 1-5 of the cell) = last digit of the drive
  * model: 0 = D80 (8050), 1 = D81 (1581), 2 = D82 (8250), 4 = D64 (4040/
- * 1541), 7 = D71 (1571); 6 = D9060 and 9 = D9090 are reserved. */
-static const PROGMEM uint8_t lcd_small_digit[10][5] = {
-  { 7, 5, 5, 5, 7 }, { 2, 6, 2, 2, 7 }, { 7, 1, 7, 4, 7 }, { 7, 1, 3, 1, 7 },
-  { 5, 5, 7, 1, 1 }, { 7, 4, 7, 1, 7 }, { 7, 4, 7, 5, 7 }, { 7, 1, 2, 2, 2 },
-  { 7, 5, 7, 5, 7 }, { 7, 5, 7, 1, 7 },
+ * 1541), 7 = D71 (1571); 6 = D9060 and 9 = D9090 are reserved.
+ * Not Commodore formats: small P = DNP, small F = FAT directory. */
+/* 5 rows each (cell rows 1-5), drawn by Stefan; 3, 5, 6, 8, 9 to match */
+static const PROGMEM uint8_t lcd_small_digit[12][5] = {
+  { 0x04, 0x0a, 0x0a, 0x0a, 0x04 },   /* 0 */
+  { 0x04, 0x04, 0x04, 0x04, 0x04 },   /* 1 */
+  { 0x0e, 0x02, 0x06, 0x08, 0x0e },   /* 2 */
+  { 0x0e, 0x02, 0x06, 0x02, 0x0e },   /* 3 */
+  { 0x0a, 0x0a, 0x0e, 0x02, 0x02 },   /* 4 */
+  { 0x0e, 0x08, 0x0e, 0x02, 0x0e },   /* 5 */
+  { 0x0e, 0x08, 0x0e, 0x0a, 0x0e },   /* 6 */
+  { 0x0e, 0x02, 0x04, 0x04, 0x04 },   /* 7 */
+  { 0x0e, 0x0a, 0x0e, 0x0a, 0x0e },   /* 8 */
+  { 0x0e, 0x0a, 0x0e, 0x02, 0x0e },   /* 9 */
+  { 0x0c, 0x0a, 0x0c, 0x08, 0x08 },   /* 10: P = DNP (CMD partition) */
+  { 0x0e, 0x08, 0x0e, 0x08, 0x08 },   /* 11: F = FAT, no image      */
 };
 #define LCD_GLYPH_SLOTS (8 - LCD_GLYPH_FIRST)
-static uint8_t lcd_glyph_digit[LCD_GLYPH_SLOTS];   /* digit+1 per slot, 0 = free */
+static uint8_t lcd_glyph_digit[LCD_GLYPH_SLOTS];   /* glyph+1 per slot, 0 = free */
 static uint8_t lcd_glyph_next;
 
 /* CGRAM character showing the small digit d (loaded on demand) */
@@ -200,10 +211,9 @@ static char lcd_small_digit_char(uint8_t d) {
       return (char)(LCD_GLYPH_FIRST + i);
   i = lcd_glyph_next;
   lcd_glyph_next = (i + 1) % LCD_GLYPH_SLOTS;
-  rows[0] = rows[1] = 0;
+  rows[0] = rows[6] = rows[7] = 0;
   for (uint8_t r = 0; r < 5; r++)
-    rows[2 + r] = pgm_read_byte(&lcd_small_digit[d][r]) << 1;
-  rows[7] = 0;
+    rows[1 + r] = pgm_read_byte(&lcd_small_digit[d][r]);
   lcd_define_char(LCD_GLYPH_FIRST + i, rows);
   lcd_glyph_digit[i] = d + 1;
   return (char)(LCD_GLYPH_FIRST + i);
@@ -227,11 +237,14 @@ static void lcd_put_dec(uint8_t v, uint8_t digits) {
   lcd_putc('0' + v % 10);
 }
 
-/* format digit for the image on partition part, ' ' if none */
+/* format character for partition part, ' ' if unknown */
 static char lcd_format_char(uint8_t part) {
   uint8_t d;
-  if (part >= max_part || partition[part].fop != &d64ops) return ' ';
+  if (part >= max_part) return ' ';
+  if (partition[part].fop == &fatops) return lcd_small_digit_char(11);
+  if (partition[part].fop != &d64ops) return ' ';
   switch (partition[part].imagetype & D64_TYPE_MASK) {
+  case D64_TYPE_DNP: d = 10; break;
   case D64_TYPE_D41: d = 4; break;
   case D64_TYPE_D71: d = 7; break;
   case D64_TYPE_D80: d = 0; break;
@@ -274,7 +287,7 @@ static void lcd_put_device(uint8_t i) {
   /* 00-19 are messages, 73 is the DOS version: not an error */
   if (err < 20 || err == 73) lcd_puts_P(PSTR("OK "));
   else                       lcd_puts_P(PSTR("ERR"));
-  lcd_putc(image ? lcd_format_char(part) : ' ');
+  lcd_putc(lcd_format_char(part));
 }
 
 /* device order: 8..30 ascending, then the printer addresses 4..7 */
