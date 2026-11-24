@@ -11,6 +11,11 @@
  * mehrfach geschrieben und gehen so nur einmal hinaus. Gelesen wird aus dem
  * Puffer, wenn der Block dort liegt.
  *
+ * Vorauslesen: Ein Block, der nicht im Puffer liegt, wird zusammen mit den
+ * folgenden 63 gelesen (32 KB in einem Zugriff). Unter Windows puffert das
+ * Betriebssystem beim direkten Laufwerkszugriff nichts; die FAT-Suche nach
+ * freien Clustern liest sonst Tausende Sektoren einzeln ueber USB.
+ *
  * Ein gezogener Stick gilt erst als entfernt, wenn er 1,5 s lang auf
  * keine Abfrage antwortet; einzelne Lese-/Schreibfehler werden nur gemeldet.
  *
@@ -32,6 +37,7 @@
 #define CACHE_SLOTS 8192            /* Hash-Plaetze (Zweierpotenz) */
 #define CACHE_MAX   4096            /* gepufferte Bloecke (2 MB), dann leeren */
 #define IDLE_MS     300             /* so lange Ruhe, dann leeren */
+#define RA_BLOCKS   64              /* Vorauslesen: 32 KB je Lesezugriff */
 
 static const char *prefix = "blkdev";
 static int told_r, told_w;
@@ -39,6 +45,10 @@ static int is_dev;          /* Laufwerk statt Datei */
 static int gone;            /* Laufwerk entfernt (endgueltig) */
 
 static uint8_t rbuf[RUN_MAX * 512] __attribute__((aligned(4096)));
+
+static uint8_t ra_buf[RA_BLOCKS * 512] __attribute__((aligned(4096)));
+static uint64_t ra_start, ra_n;     /* Bloecke im Vorlesepuffer */
+static uint64_t total_blocks;
 
 static uint64_t c_blk[CACHE_SLOTS];
 static uint8_t c_used[CACHE_SLOTS];
@@ -274,7 +284,9 @@ int blk_open(const char *path, uint64_t *blocks)
         fprintf(stderr, "%s: kein Speicher fuer den Schreibpuffer\n", prefix);
         return -1;
     }
-    return sys_open(path, blocks);
+    if (sys_open(path, blocks)) return -1;
+    total_blocks = *blocks;
+    return 0;
 }
 
 int blk_read(uint64_t blk, uint8_t *d)
@@ -285,8 +297,22 @@ int blk_read(uint64_t blk, uint8_t *d)
         memcpy(d, c_data + (size_t)s * 512, 512);
         return 0;
     }
-    if (raw_rw(blk, rbuf, 1, 0)) return -1;
-    memcpy(d, rbuf, 512);
+    if (blk >= ra_start && blk < ra_start + ra_n) {
+        memcpy(d, ra_buf + (size_t)(blk - ra_start) * 512, 512);
+        return 0;
+    }
+    {
+        uint64_t n = total_blocks > blk ? total_blocks - blk : 1;
+        if (n > RA_BLOCKS) n = RA_BLOCKS;
+        ra_n = 0;
+        if (raw_rw(blk, ra_buf, (unsigned)n, 0)) {
+            if (n == 1 || raw_rw(blk, ra_buf, 1, 0)) return -1;   /* Ende/Fehler: einzeln */
+            n = 1;
+        }
+        ra_start = blk;
+        ra_n = n;
+    }
+    memcpy(d, ra_buf, 512);
     return 0;
 }
 
@@ -297,6 +323,8 @@ int blk_write(uint64_t blk, const uint8_t *d)
     if (c_count >= CACHE_MAX && slot_of(blk, 0) < 0) flush();
     s = slot_of(blk, 1);
     memcpy(c_data + (size_t)s * 512, d, 512);
+    if (blk >= ra_start && blk < ra_start + ra_n)        /* Vorlesepuffer aktuell halten */
+        memcpy(ra_buf + (size_t)(blk - ra_start) * 512, d, 512);
     last_write_ms = now_ms();
     return 0;
 }
