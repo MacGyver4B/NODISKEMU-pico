@@ -68,8 +68,15 @@ static inline tick_t getticks(void) {
  * wouldn't care). Gcc is currently neither.
  * (">=0" refers to the time_after_eq macro which wasn't copied)
  */
+/* Die Differenz muss in tick_t-Breite gebildet und erst dann als
+ * vorzeichenbehaftet gelesen werden. Frueher wurden a und b einzeln nach
+ * stick_t gewandelt und dann in int (16 Bit -> 32 Bit) subtrahiert: Auf dem
+ * AVR (16-Bit-Ticks) lag ein Zeitlimit, das ueber Tick 32767 reichte, damit
+ * sofort als abgelaufen. 1 s lang alle 655 s (ab 326,7 s nach dem Start)
+ * meldete z. B. jeder SD-Befehl einen Timeout - die Karte war danach weg
+ * (74 DRIVE NOT READY). */
 #define time_after(a,b)         \
-         ((stick_t)(b) - (stick_t)(a) < 0)
+         ((stick_t)((tick_t)(b) - (tick_t)(a)) < 0)
 #define time_before(a,b)        time_after(b,a)
 
 
