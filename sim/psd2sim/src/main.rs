@@ -119,6 +119,9 @@ extern "C" {
 /// Postfach der Firmware (rp2350/emu.h): SD-Karte und Debugausgabe
 const MBOX: u32 = 0x2008_0000;
 
+static UART_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static UART_ALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn mbox_byte(emu: &Emulator, i: u32) -> u8 {
     let w = emu.peek(MBOX + 16 + (i & !3));
     (w >> ((i & 3) * 8)) as u8
@@ -158,6 +161,19 @@ fn mbox(emu: &mut Emulator, line: &mut String) {
             for i in 0..len {
                 let c = mbox_byte(emu, i) as char;
                 if c == '\n' {
+                    // Debug-Ausgabe der Firmware: nur die Startmeldungen bis zum
+                    // ersten "idle", danach nur mit -v oder PSD2_UART (jedes
+                    // Busbyte als Hexdump bremst sonst die Windows-Konsole und
+                    // damit die ganze Simulation)
+                    let quiet = UART_QUIET.load(Ordering::Relaxed);
+                    if !quiet && line.trim_end_matches('\r') == "idle"
+                        && !UART_ALL.load(Ordering::Relaxed) {
+                        UART_QUIET.store(true, Ordering::Relaxed);
+                    }
+                    if quiet {
+                        line.clear();
+                        continue;
+                    }
                     if std::env::var("PSD2_CYC").is_ok() {
                         eprintln!("petsd2 [{}]: {}", emu.cycles(), line.trim_end_matches('\r'));
                     } else {
@@ -414,6 +430,7 @@ fn main() {
         eprintln!("usage: psd2sim [-v] [-l vorausschau_us] [-s sdkarte.img] [-b dip40 [-w port] [-k tasten] [-r A00|A02]] firmware.bin ieeebus [iecbus]");
         std::process::exit(1);
     }
+    UART_ALL.store(verbose > 0 || std::env::var("PSD2_UART").is_ok(), Ordering::Relaxed);
     let fw = std::fs::read(&args[0]).expect("Firmware");
     if let Some(p) = &sdimg {
         let c = std::ffi::CString::new(p.clone()).unwrap();
