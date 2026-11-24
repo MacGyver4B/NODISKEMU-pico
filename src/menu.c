@@ -125,17 +125,16 @@ static inline uint8_t min(uint8_t a, uint8_t b) {
 
 
 /* The address of the drive the computer addressed last (LISTEN or TALK)
- * is shown inverted on the status screen. The HD44780 cannot invert, so
- * '#' and the digits are copied into CGRAM slots 5..7 with all dots
- * flipped. Every access keeps it inverted for another LCD_SEL_TIMEOUT, so
- * it works as an activity light per drive; another drive takes over at
- * once. Glyphs from the A00/A02 ROM (equal for these characters).
+ * is shown inverted on the status screen (the number, not the '#'). The
+ * HD44780 cannot invert, so the digits are copied into CGRAM slots 5..6
+ * with all dots flipped. Every access keeps it inverted for another
+ * LCD_SEL_TIMEOUT, so it works as an activity light per drive; another
+ * drive takes over at once. Glyphs from the A00/A02 ROM (equal for these characters).
  */
 #define LCD_SEL_SLOT     5
 #define LCD_SEL_TIMEOUT  MS_TO_TICKS(1000)
 
-static const PROGMEM uint8_t lcd_digit_glyphs[11][7] = {
-  {0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a},   // '#'
+static const PROGMEM uint8_t lcd_digit_glyphs[10][7] = {
   {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e},   // '0'
   {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e},
   {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f},
@@ -162,28 +161,26 @@ void lcd_mark_selected(uint8_t addr) {
   }
 }
 
-/* print "#<addr>", inverted for the last addressed drive */
+/* print "#<addr>", the number inverted while the drive is accessed */
 static uint8_t lcd_put_addr(uint8_t addr) {
-  char buf[4];
-  uint8_t i, n, rows[8];
+  char buf[2];
+  uint8_t i, n = 0, rows[8];
 
-  buf[0] = '#';
-  n = 1;
   if (addr >= 10) buf[n++] = '0' + addr / 10;
   buf[n++] = '0' + addr % 10;
+  lcd_putc('#');
   if (addr != lcd_sel_addr) {
     for (i = 0; i < n; i++) lcd_putc(buf[i]);
-    return n;
+    return n + 1;
   }
   for (i = 0; i < n; i++) {
-    uint8_t g = buf[i] == '#' ? 0 : buf[i] - '0' + 1;
     for (uint8_t y = 0; y < 7; y++)
-      rows[y] = pgm_read_byte(&lcd_digit_glyphs[g][y]) ^ 0x1f;
+      rows[y] = pgm_read_byte(&lcd_digit_glyphs[buf[i] - '0'][y]) ^ 0x1f;
     rows[7] = 0x1f;
     lcd_set_char(LCD_SEL_SLOT + i, rows);
   }
   for (i = 0; i < n; i++) lcd_putc(LCD_SEL_SLOT + i);
-  return n;
+  return n + 1;
 }
 
 void lcd_update_device_addr(void) {
