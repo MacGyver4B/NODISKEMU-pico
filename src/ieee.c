@@ -444,6 +444,20 @@ void ieee488_BusIdle(void) {
 }
 
 
+/* Release the bus unless a new ATN cycle has begun. The ATN interrupt has
+ * then already pulled NRFD (and set up listen mode); releasing NRFD/NDAC now
+ * would let the controller see no device for a moment and report
+ * ?DEVICE NOT PRESENT (seen when the PET addressed the drive again while a
+ * U1 command was still being processed). The ATN interrupt is held off
+ * during the check, so it cannot slip in between. */
+static void ieee488_BusIdleUnlessAtn(void) {
+  ieee488_DisableAtnInterrupt();
+  if (!ieee488_ATN_received)
+    ieee488_BusIdle();
+  ieee488_EnableAtnInterrupt();
+}
+
+
 void ieee488_BusSleep(bool sleep) {
   if (sleep) {
     ieee488_DisableAtnInterrupt();
@@ -624,7 +638,7 @@ void ieee488_TalkLoop(uint8_t sa) {
       while (ieee488_NDAC()) {          // Wait for NDAC low
         if (ieee488_ATN_received) {
           uart_puts_P(PSTR("T1\r\n"));
-          ieee488_BusIdle();
+          ieee488_BusIdleUnlessAtn();
           return;
         }
         if (ieee488_CheckIFC()) return;
@@ -643,7 +657,7 @@ void ieee488_TalkLoop(uint8_t sa) {
 
       if (ieee488_NDAC() || ieee488_ATN_received) {   // NDAC must stay low
         uart_puts_P(PSTR("T3\r\n"));
-        ieee488_BusIdle();
+        ieee488_BusIdleUnlessAtn();
         return;
       }
 
@@ -664,7 +678,7 @@ void ieee488_TalkLoop(uint8_t sa) {
           ieee488_SetDAV(1);
           ieee488_SetEOI(1);            // Release DAV and EOI
           uart_puts_P(PSTR("T5\r\n"));
-          ieee488_BusIdle();
+          ieee488_BusIdleUnlessAtn();
           return;
         }
         if (ieee488_CheckIFC()) return;
@@ -745,7 +759,7 @@ static void relay_TalkLoop(uint8_t sa) {
     ieee488_SetDAV(1);
     ieee488_SetEOI(1);
     while (ieee488_NDAC()) {              // auf NDAC low warten
-      if (ieee488_ATN_received) { ieee488_BusIdle(); return; }
+      if (ieee488_ATN_received) { ieee488_BusIdleUnlessAtn(); return; }
       if (ieee488_CheckIFC()) return;
     }
     while (!ieee488_NRFD()) {             // auf NRFD high warten
@@ -757,7 +771,7 @@ static void relay_TalkLoop(uint8_t sa) {
         if (ieee488_CheckIFC()) return;
       return;
     }
-    if (ieee488_NDAC() || ieee488_ATN_received) { ieee488_BusIdle(); return; }
+    if (ieee488_NDAC() || ieee488_ATN_received) { ieee488_BusIdleUnlessAtn(); return; }
     ieee488_SetEOI(eoi ? 0 : 1);
     if (ieee488_TE75160 != TE_TALK)
       ieee488_DataTalk();
@@ -765,7 +779,7 @@ static void relay_TalkLoop(uint8_t sa) {
     ieee488_SetDAV(0);
     while (ieee488_NRFD()) {
       if ((ieee488_NDAC() && ieee488_NRFD()) || ieee488_ATN_received) {
-        ieee488_SetDAV(1); ieee488_SetEOI(1); ieee488_BusIdle(); return;
+        ieee488_SetDAV(1); ieee488_SetEOI(1); ieee488_BusIdleUnlessAtn(); return;
       }
       if (ieee488_CheckIFC()) return;
     }
@@ -872,9 +886,10 @@ void handle_ieee488(void) {
           ieee488_ATN()        ||         // ATN cycle aborted?
           ieee488_CheckIFC())             // interface clear?
       {
-         // Bus Idle if we're neither listener nor talker
+         // Bus Idle if we're neither listener nor talker - but not when a
+         // new ATN cycle has started, its acknowledge must stay on the bus
          if (!ieee488_ListenActive && (ieee488_TalkingDevice == 0)) {
-           ieee488_BusIdle();
+           ieee488_BusIdleUnlessAtn();
          }
          return;
       }
