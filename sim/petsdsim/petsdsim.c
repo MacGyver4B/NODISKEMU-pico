@@ -640,6 +640,30 @@ static void pin_read(struct avr_irq_t *irq, uint32_t value, void *param)
     avr->data[pin_addr[i]] = (uint8_t)((value & ~m) | (ext_val[i] & m));
 }
 
+
+/* Diagnose (PSD_HANG=1): Byte angenommen (eigenes NRFD low, NDAC frei),
+   DAV ist laengst wieder high, aber die Firmware zieht NDAC nicht -> PC und
+   Ruecksprungadressen ausgeben (einmal je Haenger, nach 1 ms) */
+static int getenv_hang;
+static void hang_check(void)
+{
+    static uint64_t since; static int told;
+    int cond = ext_valid && (pub_pull & SL_IEEE_NRFD) && !(pub_pull & SL_IEEE_NDAC)
+               && !(ext_pull & SL_IEEE_DAV);
+    uint64_t t = now_ps();
+    if (!cond) { since = 0; told = 0; return; }
+    if (!since) since = t;
+    if (!told && t - since > 1000000000ULL) {
+        unsigned sp = avr->data[0x5d] | (avr->data[0x5e] << 8), k;
+        told = 1;
+        fprintf(stderr, "petsdsim %10.3f ms: HAENGER PC %05x SP %04x ATN %s Stapel:",
+                t / 1e9, avr->pc, sp, (ext_pull & SL_IEEE_ATN) ? "low" : "high");
+        for (k = 1; k <= 24 && sp + k < 0x4100; k++)
+            fprintf(stderr, " %02x", avr->data[sp + k]);
+        fprintf(stderr, "\n");
+    }
+}
+
 /* Bus der anderen (pull/data: gesetzt = low) auf die AVR-Eingaenge */
 
 static void apply_ext(uint8_t l, uint8_t d)
@@ -789,6 +813,7 @@ usage:
     ee_load();
     avr->log = verbose > 2 ? 3 : 1;
 
+    getenv_hang = getenv("PSD_HANG") != NULL;
     img = fopen(argv[optind + 1], "r+b");
     if (!img) {
         perror(argv[optind + 1]);
@@ -997,6 +1022,7 @@ usage:
                 stop = 1;
                 break;
             }
+            if (getenv_hang) hang_check();
             publish();
             panel_step();
             ee_poll();

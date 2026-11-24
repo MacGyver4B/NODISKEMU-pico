@@ -153,6 +153,14 @@ interrupt routine running. `bus.BYTE` shows every transferred byte decoded
 (`LISTEN_11`, `OPEN_15`, `49_'I'`, `30_'0'_EOI`, ...). Times are simulated
 nanoseconds. Examples are in `petsdsim/examples/`.
 
+With the environment variable `PSD_HANG=1` petsdsim reports when the
+firmware has accepted a byte (NRFD held low, NDAC released) but has not
+finished the handshake 1 ms after DAV went high again. The line gives the
+AVR program counter and the top of the stack (`petsdsim ... ms: HAENGER PC
+...`); `avr-addr2line -f -e NODISKEMU.elf 0x<PC>` names the function. This
+found a dropped UNLISTEN in firmware older than 2026-11-22. Lines during the
+first 7 s (boot) and while ATN is low are normal.
+
 ## Status and limits
 
 - Tested on Linux (Ubuntu) and by Torsten (tuti) on a Raspberry Pi 5
