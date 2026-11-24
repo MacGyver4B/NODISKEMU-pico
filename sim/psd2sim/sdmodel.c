@@ -18,6 +18,27 @@ static int sd_ss = 1;
 static int idle = 1;
 static unsigned long spi_n = 0;
 
+/* Diagnose: die letzten SD-Befehle; faengt die Firmware die Karte nach dem
+   Start neu an (CMD0), werden sie ausgegeben */
+#define HIST 24
+static struct { unsigned long n; uint8_t c, st; uint32_t arg; } hist[HIST];
+static unsigned hist_pos, reinits;
+static int started;             /* Datenbefehle seit dem Start (die Firmware richtet die Karte beim Einbinden mehrfach ein) */
+static const char *stname[] = { "CMD", "WRWAIT", "WRDATA", "MWRWAIT", "MWRDATA", "RDMULTI" };
+static void diag(const char *why)
+{
+    unsigned i;
+    reinits++;
+    if (reinits > 20 && reinits % 100) return;
+    fprintf(stderr, "psd2sim: SD-Diagnose (%u): %s (Zustand %s, Schreibpos %d, SPI-Byte %lu). Letzte Befehle:\n",
+            reinits, why, stname[sdst], wpos, spi_n);
+    for (i = 0; i < HIST; i++) {
+        unsigned k = (hist_pos + i) % HIST;
+        if (!hist[k].n) continue;
+        fprintf(stderr, "  @%lu %s CMD%u %08x\n", hist[k].n, stname[hist[k].st], hist[k].c, hist[k].arg);
+    }
+}
+
 static uint16_t crc16(const uint8_t *p, int n)
 {
     uint16_t c = 0;
@@ -58,6 +79,11 @@ static void sd_command(void)
     int c = cmd[0] & 0x3f;
     uint32_t arg = ((uint32_t)cmd[1] << 24) | ((uint32_t)cmd[2] << 16) | ((uint32_t)cmd[3] << 8) | cmd[4];
     uint8_t r1 = idle ? 0x01 : 0x00;
+    hist[hist_pos].n = spi_n; hist[hist_pos].c = (uint8_t)(c | (acmd ? 0x80 : 0));
+    hist[hist_pos].st = (uint8_t)sdst; hist[hist_pos].arg = arg;
+    hist_pos = (hist_pos + 1) % HIST;
+    if (c == 0 && !acmd && started >= 200) diag("Firmware setzt die Karte zurueck");
+    if (!acmd && (c == 17 || c == 18 || c == 24 || c == 25) && started < 200) started++;
     outlen = outpos = 0;
     q(0xff);                    /* Ncr */
     if (verbose > 2) {
@@ -157,7 +183,10 @@ static uint8_t sd_byte(uint8_t in)
             outlen = outpos = 0;
             q(0xff); q(0x00); q(0x00); q(0xff);
             sdst = SD_CMD;
-        } else if ((in & 0xc0) == 0x40 && sdst == SD_MWRWAIT) {
+        } else if ((in & 0xc0) == 0x40) {
+            /* Befehl statt Datentoken: bei der Einzelblock-Schreibung haette
+               die Karte sonst festgesteckt und auch CMD0 ueberhoert */
+            if (sdst == SD_WRWAIT) diag("Befehl statt Datentoken");
             sdst = SD_CMD;
             cmd[0] = in;
             cmdlen = 1;
