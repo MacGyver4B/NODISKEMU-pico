@@ -29,6 +29,30 @@ automatically). On the PET: `directory u11`, `dload"name",u11` and so on —
 menu or with `print#15,"u0>"chr$(8)` and it stays: settings are kept in an
 EEPROM file next to the card (`mycard.eep`).
 
+### A real USB stick or SD card as the card
+
+Instead of an image file the drive can use a real medium: a USB stick or an
+SD card in a USB reader.
+
+    python3 petsd-sim.py --list-drives
+    python3 petsd-sim.py --avr --sd PETSD2
+
+Only removable media up to 32 GB are listed at all. One of them can be used
+if it is FAT formatted and its volume name starts with `PETSD` (any case;
+rename it in Explorer, e.g. `PETSD`, `PETSD2`, `PETSD-GAME`). `--sd` chooses
+it by 5 to 9 characters: the start of its volume name or of its volume
+serial (`1A2B-3C4D`, as shown by `--list-drives` and by `vol G:`). Exactly
+one medium must match, otherwise nothing is touched. Sticks cloned at the
+factory may share a serial; `--new-id G:` (Linux: `--new-id /dev/sdb`) gives
+one a new random serial after asking. The EEPROM settings are kept next to
+the launcher as `usb-<serial>.eep`.
+
+Windows needs administrator rights for raw disk access; the launcher asks
+for them and continues in a new console window. While the simulation runs
+the medium is locked and disappears from Explorer; close the simulation
+before pulling it. Linux: the medium must not be mounted, and you need write
+access to the device (`sudo` or group `disk`).
+
 The green BUSY LED is lit while channels are open, the red DIRTY LED shows
 unwritten data or blinks on an error, as on the board. While the PET
 accesses a drive, the `#` in front of its address on the status screen

@@ -54,6 +54,7 @@
 
 #include "simlink.h"
 #include "buscap.h"
+#include "../blkdev.h"
 
 
 /* Datenadressen der Ports (I/O + 0x20) */
@@ -328,7 +329,6 @@ static uint64_t now_ps(void)
 
 /* ------------------------------ SD-Karte ------------------------------ */
 
-static FILE *img;
 static uint64_t img_blocks;
 static uint8_t cmd[6];
 static int cmdlen = 0;
@@ -364,8 +364,7 @@ static void q_block(uint32_t blk)
     uint16_t c;
     memset(d, 0, sizeof d);
     if (blk < img_blocks) {
-        fseek(img, (long)blk * 512, SEEK_SET);
-        if (fread(d, 1, 512, img) != 512) {
+        if (blk_read(blk, d)) {
             memset(d, 0, sizeof d);
         }
     }
@@ -491,9 +490,7 @@ static uint8_t sd_byte(uint8_t in)
         wbuf[wpos++] = in;
         if (wpos == 514) {
             if (waddr < img_blocks) {
-                fseek(img, (long)waddr * 512, SEEK_SET);
-                fwrite(wbuf, 1, 512, img);
-                fflush(img);
+                blk_write(waddr, wbuf);
             }
             waddr++;
             outlen = outpos = 0;
@@ -820,13 +817,10 @@ usage:
     avr->log = verbose > 2 ? 3 : 1;
 
     getenv_hang = getenv("PSD_HANG") != NULL;
-    img = fopen(argv[optind + 1], "r+b");
-    if (!img) {
-        perror(argv[optind + 1]);
+    blk_set_prefix("petsdsim");
+    if (blk_open(argv[optind + 1], &img_blocks)) {
         return 1;
     }
-    fseek(img, 0, SEEK_END);
-    img_blocks = (uint64_t)ftell(img) / 512;
 
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_OUTPUT), spi_out, NULL);
     {
@@ -885,7 +879,7 @@ usage:
         }
         if (cap_on) buscap_close();
         ee_save();
-        fclose(img);
+        blk_close();
         return 0;
     }
 
@@ -1049,6 +1043,6 @@ usage:
     simlink_detach(sl, slot);
     simlink_close(sl, 0);
     ee_save();
-    fclose(img);
+    blk_close();
     return 0;
 }

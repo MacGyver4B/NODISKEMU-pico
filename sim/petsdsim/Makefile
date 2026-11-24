@@ -58,8 +58,8 @@ ifneq ($(filter MINGW% MSYS%,$(UNAME)),)
   LDFLAGS += -static
 endif
 
-petsdsim: petsdsim.c buscap.c buscap.h $(SIMLINK_DIR)/simlink.c $(PANEL) $(SIMAVR_LIB)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ petsdsim.c buscap.c $(SIMLINK_DIR)/simlink.c $(LIBS)
+petsdsim: petsdsim.c buscap.c buscap.h ../blkdev.c ../blkdev.h $(SIMLINK_DIR)/simlink.c $(PANEL) $(SIMAVR_LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ petsdsim.c buscap.c ../blkdev.c $(SIMLINK_DIR)/simlink.c $(LIBS)
 
 # simavr seriell bauen: parallel faellt die Kern-Konfiguration aus der Reihe.
 # simavr baut mit -Werror; neuere GCC melden in simavr-Quellen Warnungen,

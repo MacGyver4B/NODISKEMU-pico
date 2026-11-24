@@ -15,8 +15,10 @@ fn main() {
         b.define("_DARWIN_C_SOURCE", None);
     }
     b.compile("simlink");
-    cc::Build::new().file("sdmodel.c").compile("sdmodel");
+    cc::Build::new().file("sdmodel.c").file("../blkdev.c").compile("sdmodel");
     println!("cargo:rerun-if-changed=sdmodel.c");
+    println!("cargo:rerun-if-changed=../blkdev.c");
+    println!("cargo:rerun-if-changed=../blkdev.h");
     println!("cargo:rerun-if-changed={}/simlink.c", sl);
     if os != "windows" {
         println!("cargo:rustc-link-lib=pthread");

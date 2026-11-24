@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include "../blkdev.h"
 static int verbose = 0;
-static FILE *img;
 static uint64_t img_blocks;
 static uint8_t cmd[6];
 static int cmdlen = 0;
@@ -39,8 +39,7 @@ static void q_block(uint32_t blk)
     uint16_t c;
     memset(d, 0, sizeof d);
     if (blk < img_blocks) {
-        fseek(img, (long)blk * 512, SEEK_SET);
-        if (fread(d, 1, 512, img) != 512) {
+        if (blk_read(blk, d)) {
             memset(d, 0, sizeof d);
         }
     }
@@ -166,9 +165,7 @@ static uint8_t sd_byte(uint8_t in)
         wbuf[wpos++] = in;
         if (wpos == 514) {
             if (waddr < img_blocks) {
-                fseek(img, (long)waddr * 512, SEEK_SET);
-                fwrite(wbuf, 1, 512, img);
-                fflush(img);
+                blk_write(waddr, wbuf);
             }
             waddr++;
             outlen = outpos = 0;
@@ -183,11 +180,8 @@ static uint8_t sd_byte(uint8_t in)
 int sd_open(const char *path, int v)
 {
     verbose = v;
-    img = fopen(path, "r+b");
-    if (!img) return -1;
-    fseek(img, 0, SEEK_END);
-    img_blocks = (uint64_t)ftell(img) / 512;
-    return 0;
+    blk_set_prefix("psd2sim");
+    return blk_open(path, &img_blocks);
 }
 
 unsigned long sd_blocks(void) { return (unsigned long)img_blocks; }
