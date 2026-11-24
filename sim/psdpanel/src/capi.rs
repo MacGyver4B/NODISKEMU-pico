@@ -40,6 +40,12 @@ pub extern "C" fn psdpanel_lcd_pins(e: u8, rs: u8, nib: u8) {
     with(|c| c.link.lcd_pins(e != 0, rs != 0, nib), ())
 }
 
+/// LEDs: Bit 0 = BUSY (gruen), Bit 1 = DIRTY (rot)
+#[no_mangle]
+pub extern "C" fn psdpanel_leds(l: u8) {
+    with(|c| c.link.leds(l), ())
+}
+
 /// I2C-Start mit 7-Bit-Adresse; 1 = ACK
 #[no_mangle]
 pub extern "C" fn psdpanel_i2c_start(addr: u8, read: u8) -> u8 {

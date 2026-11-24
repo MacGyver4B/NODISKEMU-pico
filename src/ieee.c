@@ -957,6 +957,7 @@ void handle_ieee488(void) {
     else if (cmd3 == IEEE_LISTEN) {       // LISTEN
       if ((dev = md_find(Device)) != MD_NO_DEVICE) {
         md_select(dev);
+        lcd_mark_selected(Device);
         uart_puts_P(PSTR("LSN\r\n"));
         ieee488_ListenActive = Device;
         // Override talk state because we can't be
@@ -966,6 +967,7 @@ void handle_ieee488(void) {
     } else if (cmd3 == IEEE_TALK) {       // TALK
       if ((dev = md_find(Device)) != MD_NO_DEVICE) {
         md_select(dev);
+        lcd_mark_selected(Device);
         uart_puts_P(PSTR("TLK\r\n"));
         ieee488_TalkingDevice = Device;
         // Override listen state because we can't be

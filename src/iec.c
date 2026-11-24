@@ -670,11 +670,13 @@ void iec_mainloop(void) {
       } else if ((cmd & 0xe0) == 0x40 &&
                  md_find(cmd & 0x1f) != MD_NO_DEVICE) { /* Talk */
         md_select(md_find(cmd & 0x1f));
+        lcd_mark_selected(cmd & 0x1f);
         iec_data.device_state = DEVICE_TALK;
         iec_data.bus_state = BUS_FORME;
       } else if ((cmd & 0xe0) == 0x20 &&
                  md_find(cmd & 0x1f) != MD_NO_DEVICE) { /* Listen */
         md_select(md_find(cmd & 0x1f));
+        lcd_mark_selected(cmd & 0x1f);
         iec_data.device_state = DEVICE_LISTEN;
         iec_data.bus_state = BUS_FORME;
       } else if ((cmd & 0x60) == 0x60) {

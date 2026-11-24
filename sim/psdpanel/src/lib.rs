@@ -234,6 +234,8 @@ pub struct Shared {
     pub tiny: Attiny,
     pub rtc: Ds3231,
     pub keys: u8,
+    /// LEDs: Bit 0 = BUSY (gruen), Bit 1 = DIRTY (rot)
+    pub leds: u8,
     pub key_until: Option<(f64, u8)>,   // (simulierte ms, Tasten)
     pub sim_ms: f64,
     /// Tastenfolge aus PSD_KEYS: (ab ms, Tasten, Dauer ms), sortiert
@@ -253,6 +255,7 @@ pub fn new_panel() -> Panel {
             start: std::env::var("PSD_RTC_START").ok().and_then(|v| v.parse().ok()),
         },
         keys: 0,
+        leds: 0,
         key_until: None,
         sim_ms: 0.0,
         script: std::env::var("PSD_KEYS").map(|v| parse_script(&v)).unwrap_or_default(),
@@ -496,6 +499,7 @@ pub struct Link {
     pub p: Panel,
     last_e: bool,
     keys: u8,
+    leds: u8,
     pub dump: bool,
     last_text: String,
 }
@@ -503,10 +507,18 @@ pub struct Link {
 impl Link {
     pub fn new(p: Panel) -> Self {
         let keys = p.lock().unwrap().keys;
-        Link { p, last_e: false, keys, dump: std::env::var("PSD2_LCDDUMP").is_ok(), last_text: String::new() }
+        Link { p, last_e: false, keys, leds: 0, dump: std::env::var("PSD2_LCDDUMP").is_ok(), last_text: String::new() }
     }
 
     pub fn keys(&self) -> u8 { self.keys }
+
+    /// LED-Zustand (Bit 0 BUSY, Bit 1 DIRTY); nur bei Aenderung sperren
+    pub fn leds(&mut self, l: u8) {
+        if l != self.leds {
+            self.leds = l;
+            self.p.lock().unwrap().leds = l;
+        }
+    }
 
     /// Pegel an E, RS, DB4-DB7 (Bit 0 = DB4); auswerten bei fallendem E
     pub fn lcd_pins(&mut self, e: bool, rs: bool, nib: u8) {
@@ -602,12 +614,12 @@ fn state_json(s: &Shared) -> String {
         lines.push(format!("[{}]", l.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")));
     }
     format!(
-        "{{\"rom\":\"{}\",\"lines\":[{}],\"cgram\":[{}],\"cursor\":{},\"on\":{},\"keys\":{},\"contrast\":{},\"brightness\":{},\"io_iec\":{},\"ms\":{:.0},\"text\":\"{}\"}}",
+        "{{\"rom\":\"{}\",\"lines\":[{}],\"cgram\":[{}],\"cursor\":{},\"on\":{},\"keys\":{},\"leds\":{},\"contrast\":{},\"brightness\":{},\"io_iec\":{},\"ms\":{:.0},\"text\":\"{}\"}}",
         if s.lcd.a02 { "A02" } else { "A00" },
         lines.join(","),
         s.lcd.cgram.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","),
         s.lcd.cursor_pos().map(|(y, x)| format!("[{},{}]", y, x)).unwrap_or_else(|| "null".into()),
-        s.lcd.on, s.keys, s.tiny.contrast, 255 - s.tiny.brightness as u32, s.tiny.io_iec, s.sim_ms,
+        s.lcd.on, s.keys, s.leds, s.tiny.contrast, 255 - s.tiny.brightness as u32, s.tiny.io_iec, s.sim_ms,
         json_escape(&s.lcd.text())
     )
 }

@@ -15,6 +15,8 @@ use psdpanel::{I2cDev, Link};
 const LCD_DB: [u32; 4] = [16, 17, 18, 2];
 const LCD_RS: u32 = 13;
 const LCD_E: u32 = 14;
+const LED_DIRTY: u32 = 10;   // H1.14, rot
+const LED_BUSY: u32 = 11;    // H1.15, gruen
 const ADC_CH: u32 = 0;      // GPIO 40
 
 struct I2cBus(I2cDev);
@@ -56,6 +58,9 @@ impl PanelLink {
             if (out >> pin) & 1 == 1 { nib |= 1 << i; }
         }
         self.link.lcd_pins(e, rs, nib);
+        // LEDs (petSD2 DIP40: dirty GPIO10, busy GPIO11, aktiv high)
+        let on = |pin: u32| (oe >> pin) & 1 == 1 && (out >> pin) & 1 == 1;
+        self.link.leds((on(LED_BUSY) as u8) | ((on(LED_DIRTY) as u8) << 1));
     }
 
     /// seltener aufrufen (z. B. jede simulierte Millisekunde)

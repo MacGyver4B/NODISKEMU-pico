@@ -124,6 +124,68 @@ static inline uint8_t min(uint8_t a, uint8_t b) {
 }
 
 
+/* The address of the drive the computer addressed last (LISTEN or TALK)
+ * is shown inverted on the status screen. The HD44780 cannot invert, so
+ * '#' and the digits are copied into CGRAM slots 5..7 with all dots
+ * flipped. It stays inverted until another drive is addressed or the bus
+ * has been quiet for LCD_SEL_TIMEOUT. Glyphs from the A00/A02 ROM (equal
+ * for these characters).
+ */
+#define LCD_SEL_SLOT     5
+#define LCD_SEL_TIMEOUT  MS_TO_TICKS(60000)
+
+static const PROGMEM uint8_t lcd_digit_glyphs[11][7] = {
+  {0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a},   // '#'
+  {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e},   // '0'
+  {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e},
+  {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f},
+  {0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e},
+  {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02},
+  {0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e},
+  {0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e},
+  {0x1f, 0x11, 0x01, 0x02, 0x04, 0x04, 0x04},
+  {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e},
+  {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c}    // '9'
+};
+
+static uint8_t lcd_sel_addr;           // 0: nothing shown inverted
+static volatile uint8_t lcd_sel_new;   // set from the bus code
+static volatile bool lcd_sel_changed;
+static tick_t lcd_sel_time;
+
+/* Called on LISTEN/TALK for one of our addresses: cheap, no LCD access */
+void lcd_mark_selected(uint8_t addr) {
+  lcd_sel_time = getticks();
+  if (addr != lcd_sel_new) {
+    lcd_sel_new = addr;
+    lcd_sel_changed = true;
+  }
+}
+
+/* print "#<addr>", inverted for the last addressed drive */
+static uint8_t lcd_put_addr(uint8_t addr) {
+  char buf[4];
+  uint8_t i, n, rows[8];
+
+  buf[0] = '#';
+  n = 1;
+  if (addr >= 10) buf[n++] = '0' + addr / 10;
+  buf[n++] = '0' + addr % 10;
+  if (addr != lcd_sel_addr) {
+    for (i = 0; i < n; i++) lcd_putc(buf[i]);
+    return n;
+  }
+  for (i = 0; i < n; i++) {
+    uint8_t g = buf[i] == '#' ? 0 : buf[i] - '0' + 1;
+    for (uint8_t y = 0; y < 7; y++)
+      rows[y] = pgm_read_byte(&lcd_digit_glyphs[g][y]) ^ 0x1f;
+    rows[7] = 0x1f;
+    lcd_set_char(LCD_SEL_SLOT + i, rows);
+  }
+  for (i = 0; i < n; i++) lcd_putc(LCD_SEL_SLOT + i);
+  return n;
+}
+
 void lcd_update_device_addr(void) {
   if (lcd_current_screen == SCRN_STATUS) {
     lcd_home();
@@ -133,8 +195,8 @@ void lcd_update_device_addr(void) {
       uint8_t i, col = 0;
       for (i = 0; i < MD_MAX_DEVICES; i++) {
         if (md_dev[i].address) {
-          lcd_printf("#%d ", md_dev[i].address);
-          col += md_dev[i].address < 10 ? 3 : 4;
+          col += lcd_put_addr(md_dev[i].address) + 1;
+          lcd_putc(' ');
         }
       }
       while (col++ < 16)
@@ -142,7 +204,9 @@ void lcd_update_device_addr(void) {
       return;
     }
 #endif
-    lcd_printf("Device ID: #%d ", device_address);
+    lcd_puts_P(PSTR("Device ID: "));
+    lcd_put_addr(device_address);
+    lcd_putc(' ');
   }
 }
 
@@ -231,6 +295,16 @@ void handle_lcd(void) {
   if (lcd_timer) {
     ticks = getticks();
     if (time_before(lcd_timeout, ticks)) menu_select_status();
+  }
+
+  /* inverted address: follow the bus, clear after a quiet minute */
+  if (lcd_sel_changed) {
+    lcd_sel_changed = false;
+    lcd_sel_addr = lcd_sel_new;
+    lcd_update_device_addr();
+  } else if (lcd_sel_addr && time_after(getticks(), lcd_sel_time + LCD_SEL_TIMEOUT)) {
+    lcd_sel_addr = lcd_sel_new = 0;
+    lcd_update_device_addr();
   }
 }
 

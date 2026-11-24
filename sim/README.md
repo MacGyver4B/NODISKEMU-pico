@@ -2,7 +2,8 @@
 
 This directory lets you run the drive firmware on your PC, connected to a
 simulated PET (xpet from VICE) over a simulated IEEE-488 bus, with the
-front panel (20×4 LCD, PREV/NEXT/SELECT buttons) in your web browser:
+front panel (20×4 LCD, PREV/NEXT/SELECT buttons, BUSY and DIRTY LEDs) in
+your web browser:
 
 | Drive | Firmware | Simulator |
 | --- | --- | --- |
@@ -27,6 +28,12 @@ automatically). On the PET: `directory u11`, `dload"name",u11` and so on —
 **the drive is device 11**, as a petSD+ with a fresh EEPROM. Change it in the
 menu or with `print#15,"u0>"chr$(8)` and it stays: settings are kept in an
 EEPROM file next to the card (`mycard.eep`).
+
+The green BUSY LED is lit while channels are open, the red DIRTY LED shows
+unwritten data or blinks on an error, as on the board. The address the PET
+addressed last is shown inverted on the status screen until another drive
+is addressed or the bus has been quiet for a minute (firmware of this
+branch; the official NODISKEMU shows it normally).
 
 Panel: click the buttons, or use ←/→/Enter on the page (PREV/NEXT/SELECT).
 Press SELECT for the menu, as on the real drive.

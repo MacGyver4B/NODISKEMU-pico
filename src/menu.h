@@ -45,6 +45,7 @@ void lcd_splashscreen(void);
 void lcd_draw_screen(uint16_t screen);
 void lcd_refresh(void);
 void lcd_update_device_addr(void);
+void lcd_mark_selected(uint8_t addr);
 void lcd_update_disk_status(void);
 void handle_lcd(void);
 bool handle_buttons(void);
@@ -66,6 +67,7 @@ static inline void lcd_splashscreen(void) {}
 static inline void lcd_draw_screen(uint16_t screen) {}
 static inline void lcd_refresh(void) {}
 static inline void lcd_update_device_addr(void) {}
+static inline void lcd_mark_selected(uint8_t addr) { (void)addr; }
 static inline void handle_lcd(void) {}
 static inline bool handle_buttons(void) { return false; }
 static inline void lcd_update_disk_status(void) {}

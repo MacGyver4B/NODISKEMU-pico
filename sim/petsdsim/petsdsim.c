@@ -90,6 +90,7 @@ uint8_t psdpanel_i2c_read(void);
 void    psdpanel_i2c_stop(void);
 uint8_t psdpanel_tick(double sim_ms);
 uint32_t psdpanel_key_mv(uint8_t keys);
+void    psdpanel_leds(uint8_t l);
 #endif
 /* ---------------------------- EEPROM-Datei ---------------------------- */
 
@@ -308,6 +309,11 @@ static void panel_step(void)
     }
     panel_next = sim_ps() + 1000000000ULL;
     k = psdpanel_tick(sim_ps() / 1e9);
+    {
+        /* LEDs des petSD+: BUSY PD1 (gruen), DIRTY PD0 (rot), aktiv high */
+        uint8_t on = avr->data[0x2b] & avr->data[0x2a];
+        psdpanel_leds((uint8_t)(((on >> 1) & 1) | ((on & 1) << 1)));
+    }
     if (k != panel_keys) {
         panel_keys = k;
         avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ, ADC_IRQ_ADC7), psdpanel_key_mv(k));

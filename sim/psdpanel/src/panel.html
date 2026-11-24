@@ -17,6 +17,10 @@
   .leds { display:flex; gap:14px; font-size:12px; color:#9c9; }
   .info { margin-top:14px; font-size:12px; color:#999; text-align:center; line-height:1.6; }
   code { color:#cfc; }
+  .leds span { display:flex; align-items:center; gap:6px; }
+  .led { display:inline-block; width:12px; height:12px; border-radius:50%; border:1px solid #000; }
+  #busy { background:#163a16; } #busy.on { background:#3f3; box-shadow:0 0 8px #3f3; }
+  #dirty { background:#3a1616; } #dirty.on { background:#f33; box-shadow:0 0 8px #f33; }
 </style>
 </head>
 <body>
@@ -27,6 +31,7 @@
     <button id="PREV" title="Pfeil links">PREV</button>
     <button id="NEXT" title="Pfeil rechts">NEXT</button>
     <button id="SEL" title="Eingabe">SEL</button>
+    <div class="leds"><span><i class="led" id="busy"></i>BUSY</span><span><i class="led" id="dirty"></i>DIRTY</span></div>
   </div>
 </div>
 <div class="info" id="info"></div>
@@ -142,6 +147,8 @@ function draw(st) {
   }
   for (const [k, m] of [['SEL', 1], ['NEXT', 2], ['PREV', 4]])
     document.getElementById(k).classList.toggle('on', (st.keys & m) !== 0);
+  document.getElementById('busy').classList.toggle('on', ((st.leds || 0) & 1) !== 0);
+  document.getElementById('dirty').classList.toggle('on', ((st.leds || 0) & 2) !== 0);
   document.getElementById('info').textContent =
     `simuliert ${(st.ms / 1000).toFixed(1)} s · Helligkeit ${st.brightness} · Kontrast ${st.contrast} (Näherung) · Zeichensatz ${st.rom} · IEEE-Bus ${st.io_iec ? 'frei' : 'gesperrt (IO_IEC = 0)'}`;
 }
