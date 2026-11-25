@@ -700,6 +700,9 @@ void lcd_update_disk_status(void) {
       for (uint8_t k = 0; n < LCD_ERR_MAX && k < CONFIG_ERROR_BUFFER_SIZE &&
                           error_buffer[k] != 13; k++)
         lcd_dpath[i].err[n++] = error_buffer[k];
+      /* ",00,00" says nothing (always so on FAT): leave it out */
+      if (n >= 7 && !memcmp(lcd_dpath[i].err + n - 6, ",00,00", 6))
+        n -= 6;
     }
     if (n != lcd_dpath[i].errlen || n) {
       lcd_dpath[i].errlen  = n;
