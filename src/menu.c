@@ -178,7 +178,9 @@ static uint8_t lcd_put_addr(uint8_t addr) {
 static uint8_t lcd_dev_track[MD_MAX_DEVICES];  /* 0: no track seen */
 static uint8_t lcd_dev_sector[MD_MAX_DEVICES];
 static tick_t  lcd_dev_access[MD_MAX_DEVICES]; /* last image access */
-static uint8_t lcd_dev_idle;                   /* bit per device: sector shown */
+static uint8_t lcd_dev_idle;                   /* bit per device: at rest */
+static uint8_t lcd_dev_sec_shown[MD_MAX_DEVICES]; /* sector of the last rest */
+static uint8_t lcd_dev_sec_valid;              /* bit per device */
 #  define LCD_IDLE_TIME MS_TO_TICKS(1000)    /* sector after this much rest */
 static uint8_t lcd_dev_drive[MD_MAX_DEVICES];
 static volatile bool lcd_dev_dirty;
@@ -227,10 +229,7 @@ void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) {
   uint8_t drive = md_active ? md_slot_drive(part) : part;
   lcd_dev_sector[i] = sector;
   lcd_dev_access[i] = getticks();
-  if (lcd_dev_idle & (1 << i)) {           /* back to "track only" */
-    lcd_dev_idle &= ~(1 << i);
-    lcd_dev_dirty = true;
-  }
+  lcd_dev_idle &= ~(1 << i);               /* busy: sector stays as it is */
   if (lcd_dev_track[i] != track || lcd_dev_drive[i] != drive) {
     lcd_dev_track[i] = track;
     lcd_dev_drive[i] = drive;
@@ -414,9 +413,10 @@ static void lcd_put_device(uint8_t i) {
       lcd_putc('T');
       lcd_put_dec(lcd_dev_track[i], 3);
       k = 5;
-      if (lcd_dev_idle & (1 << i)) {     /* at rest: where it stopped */
+      if (lcd_dev_sec_valid & (1 << i)) { /* sector of the last rest: not
+                                           updated while busy, not removed */
         lcd_puts_P(PSTR(" S"));
-        lcd_put_dec(lcd_dev_sector[i], 2);
+        lcd_put_dec(lcd_dev_sec_shown[i], 2);
         k = 9;
       }
     }
@@ -812,7 +812,11 @@ void handle_lcd(void) {
       if (lcd_dev_track[i] && !(lcd_dev_idle & (1 << i)) &&
           time_after(getticks(), lcd_dev_access[i] + LCD_IDLE_TIME)) {
         lcd_dev_idle |= 1 << i;           /* came to rest: show the sector */
-        lcd_dev_dirty = true;
+        if (!(lcd_dev_sec_valid & (1 << i)) || lcd_dev_sec_shown[i] != lcd_dev_sector[i]) {
+          lcd_dev_sec_shown[i] = lcd_dev_sector[i];
+          lcd_dev_sec_valid |= 1 << i;
+          lcd_dev_dirty = true;
+        }
       }
     if (lcd_dev_dirty && time_after(getticks(), lcd_dev_drawn + LCD_DEV_INTERVAL))
       lcd_draw_devices();
