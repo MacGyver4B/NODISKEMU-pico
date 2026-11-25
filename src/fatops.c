@@ -50,6 +50,7 @@
 #include "ustring.h"
 #include "wrapops.h"
 #include "fatops.h"
+#include "menu.h"
 
 #define P00_HEADER_SIZE       26
 #define P00_CBMNAME_OFFSET    8
@@ -604,6 +605,7 @@ static uint8_t fat_file_close(buffer_t *buf) {
   }
 
   res = f_close(&buf->pvt.fat.fh);
+  lcd_note_file(NULL);
   parse_error(res,1);
   buf->cleanup = callback_dummy;
 
@@ -650,6 +652,7 @@ void fat_open_read(path_t *path, cbmdirent_t *dent, buffer_t *buf) {
     buf->pvt.fat.headersize = P00_HEADER_SIZE;
   }
 
+  lcd_note_file(dent->name);            // device view: the name the PET sees
   buf->read      = 1;
   buf->cleanup   = fat_file_close;
   buf->refill    = fat_file_read;
@@ -761,6 +764,7 @@ void fat_open_write(path_t *path, cbmdirent_t *dent, uint8_t type, buffer_t *buf
     return;
   }
 
+  lcd_note_file(dent->name);            // device view: the name the PET sees
   mark_write_buffer(buf);
   buf->position  = 2;
   buf->lastused  = 2;

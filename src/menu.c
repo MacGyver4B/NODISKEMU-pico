@@ -176,6 +176,10 @@ static uint8_t lcd_put_addr(uint8_t addr) {
 #  define LCD_GLYPH_FIRST  2           /* CGRAM 0 = tilde, 1 = block (A02) */
 
 static uint8_t lcd_dev_track[MD_MAX_DEVICES];  /* 0: no track seen */
+static uint8_t lcd_dev_sector[MD_MAX_DEVICES];
+static tick_t  lcd_dev_access[MD_MAX_DEVICES]; /* last image access */
+static uint8_t lcd_dev_idle;                   /* bit per device: sector shown */
+#  define LCD_IDLE_TIME MS_TO_TICKS(1000)    /* sector after this much rest */
 static uint8_t lcd_dev_drive[MD_MAX_DEVICES];
 static volatile bool lcd_dev_dirty;
 static tick_t lcd_dev_drawn;
@@ -217,10 +221,16 @@ static char lcd_small_digit_char(uint8_t d) {
 }
 
 /* Called for every sector of a mounted image (d64ops): cheap, no LCD */
-void lcd_note_track(uint8_t part, uint8_t track) {
+void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) {
   uint8_t i = md_active ? md_cur : 0;
   if (i >= MD_MAX_DEVICES) return;
   uint8_t drive = md_active ? md_slot_drive(part) : part;
+  lcd_dev_sector[i] = sector;
+  lcd_dev_access[i] = getticks();
+  if (lcd_dev_idle & (1 << i)) {           /* back to "track only" */
+    lcd_dev_idle &= ~(1 << i);
+    lcd_dev_dirty = true;
+  }
   if (lcd_dev_track[i] != track || lcd_dev_drive[i] != drive) {
     lcd_dev_track[i] = track;
     lcd_dev_drive[i] = drive;
@@ -236,7 +246,10 @@ static void lcd_put_dec(uint8_t v, uint8_t digits) {
 
 /* ---- directory of FAT drives, scrolled in the device line ---- */
 #  define LCD_PATH_MAX   40             /* longer paths lose their beginning */
-#  define LCD_PATH_COLS  6              /* directory field of a device line */
+#  define LCD_PATH_COLS  (LCD_COLS - 7) /* field of a device line (cols 6-18) */
+#  define LCD_ERR_MAX    40             /* status text kept per device */
+#  define LCD_NAME_MAX   20             /* name of the open file */
+#  define LCD_ERR_NORMAL MS_TO_TICKS(2000) /* normal view between messages */
 #  define LCD_SCROLL_STEP  MS_TO_TICKS(330)
 #  define LCD_SCROLL_PAUSE MS_TO_TICKS(2000)
 
@@ -247,7 +260,58 @@ static struct {
   uint32_t clu;
   uint8_t  off;                          /* scroll position */
   tick_t   next;
+  char     err[LCD_ERR_MAX + 1];         /* " 62,FILE NOT FOUND,00,00" */
+  uint8_t  errlen;                       /* 0: no error - path or track */
+  bool     errshow;                      /* error: message (else normal view) */
+  char     name[LCD_NAME_MAX + 1];       /* open file on a FAT drive */
+  uint8_t  namelen;
 } lcd_dpath[MD_MAX_DEVICES];
+
+/* text scrolled in the field of device i: the error message, otherwise
+   the directory plus the name of an open file ("/SPIELE/ZORK.PRG") */
+static bool lcd_err_shown(uint8_t i) {
+  return lcd_dpath[i].errlen && lcd_dpath[i].errshow;
+}
+static uint8_t lcd_path_sep(uint8_t i) {    /* '/' between path and name */
+  return lcd_dpath[i].namelen && lcd_dpath[i].len > 1;
+}
+static uint8_t lcd_scroll_len(uint8_t i) {
+  if (lcd_err_shown(i)) return lcd_dpath[i].errlen;
+  if (!lcd_dpath[i].len) return 0;
+  return lcd_dpath[i].len + lcd_path_sep(i) + lcd_dpath[i].namelen;
+}
+static char lcd_scroll_char(uint8_t i, uint8_t c) {
+  if (c >= lcd_scroll_len(i)) return ' ';
+  if (lcd_err_shown(i)) return lcd_dpath[i].err[c];
+  if (c < lcd_dpath[i].len) return lcd_dpath[i].text[c];
+  c -= lcd_dpath[i].len;
+  if (lcd_path_sep(i)) {
+    if (!c) return '/';
+    c--;
+  }
+  return lcd_dpath[i].name[c];
+}
+static void lcd_scroll_restart(uint8_t i) {
+  lcd_dpath[i].off  = 0;
+  lcd_dpath[i].next = getticks() + LCD_SCROLL_PAUSE;
+}
+
+/* Called from fatops when a file is opened (name) or closed (NULL) */
+void lcd_note_file(const uint8_t *name) {
+  uint8_t i = md_active ? md_cur : 0, n = 0;
+  if (i >= MD_MAX_DEVICES) return;
+  if (name)
+    while (n < LCD_NAME_MAX && name[n]) {
+      uint8_t c = name[n];
+      if (c >= 0xc1 && c <= 0xda) c -= 0x80;      /* shifted PETSCII */
+      lcd_dpath[i].name[n++] = (c >= 32 && c < 127) ? c : '?';
+    }
+  if (n != lcd_dpath[i].namelen || n) {
+    lcd_dpath[i].namelen = n;
+    if (!lcd_dpath[i].errlen) lcd_scroll_restart(i);
+    lcd_dev_dirty = true;
+  }
+}
 
 /* put "/name" in front of the path built from the end of buf */
 static uint8_t lcd_path_prepend(char *buf, uint8_t pos, const uint8_t *name) {
@@ -330,40 +394,34 @@ static uint8_t lcd_dev_addr(uint8_t i) {
 
 /* one device line (19 columns) */
 static void lcd_put_device(uint8_t i) {
-  uint8_t addr = lcd_dev_addr(i), err, drive = lcd_dev_drive[i], part = lcd_dev_part(i);
+  uint8_t addr = lcd_dev_addr(i), drive = lcd_dev_drive[i], part = lcd_dev_part(i);
+  bool mapped = part < max_part;
 
-  if (md_active)
-    err = i == md_cur ? current_error : md_dev[i].err_code;
-  else
-    err = current_error;
   lcd_putc(addr == lcd_sel_addr ? (char)0xFF : '#');
   lcd_put_dec(addr, 2);
   lcd_putc(':');
   lcd_putc('0' + drive);
-  /* 5 columns: " Tnnn" for an image, the directory for FAT */
-  bool mapped = part < max_part;
-  if (mapped && partition[part].fop == &d64ops && lcd_dev_track[i]) {
-    lcd_putc(' ');
-    lcd_putc('T');
-    lcd_put_dec(lcd_dev_track[i], 3);
-  } else if (mapped && partition[part].fop == &fatops && lcd_dpath[i].len) {
-    /* directory, scrolled if longer than the field */
-    for (uint8_t k = 0; k < LCD_PATH_COLS; k++) {
-      uint8_t c = lcd_dpath[i].off + k;
-      lcd_putc(c < lcd_dpath[i].len ? lcd_dpath[i].text[c] : ' ');
-    }
-    lcd_puts_P(PSTR(" "));
-    goto status;
+  /* columns 6-18: an error ("62,FILE NOT FOUND,00,00"), otherwise the
+     track of an image or the directory of a FAT drive; scrolled if long */
+  if (lcd_err_shown(i) ||
+      (mapped && partition[part].fop == &fatops && lcd_dpath[i].len)) {
+    for (uint8_t k = 0; k < LCD_PATH_COLS; k++)
+      lcd_putc(lcd_scroll_char(i, lcd_dpath[i].off + k));
   } else {
-    lcd_puts_P(PSTR("     "));
+    uint8_t k = 0;
+    if (mapped && partition[part].fop == &d64ops && lcd_dev_track[i]) {
+      lcd_putc(' ');
+      lcd_putc('T');
+      lcd_put_dec(lcd_dev_track[i], 3);
+      k = 5;
+      if (lcd_dev_idle & (1 << i)) {     /* at rest: where it stopped */
+        lcd_puts_P(PSTR(" S"));
+        lcd_put_dec(lcd_dev_sector[i], 2);
+        k = 9;
+      }
+    }
+    for (; k < LCD_PATH_COLS; k++) lcd_putc(' ');
   }
-  lcd_puts_P(PSTR("  "));
-status:
-  lcd_put_dec(err, 2);
-  lcd_putc(' ');
-  /* 00-19 are messages, 73 is the DOS version: not an error */
-  if (err < 20 || err == 73) lcd_puts_P(PSTR("OK "));
-  else                       lcd_puts_P(PSTR("ER "));
   lcd_putc(lcd_format_char(part));
 }
 
@@ -524,8 +582,7 @@ static bool lcd_path_update(void) {
     lcd_dpath[i].part = part;
     lcd_dpath[i].clu  = partition[part].current_dir.fat;
     lcd_dpath[i].len  = lcd_build_path(part, lcd_dpath[i].clu, lcd_dpath[i].text);
-    lcd_dpath[i].off  = 0;
-    lcd_dpath[i].next = getticks() + LCD_SCROLL_PAUSE;
+    if (!lcd_dpath[i].errlen) lcd_scroll_restart(i);
     changed = true;
   }
   return changed;
@@ -535,10 +592,27 @@ static bool lcd_path_update(void) {
 static bool lcd_path_scroll(void) {
   bool moved = false;
   for (uint8_t i = 0; i < MD_MAX_DEVICES; i++) {
-    if (lcd_dpath[i].len <= LCD_PATH_COLS || !time_after(getticks(), lcd_dpath[i].next))
+    if (!time_after(getticks(), lcd_dpath[i].next))
       continue;
-    uint8_t last = lcd_dpath[i].len - LCD_PATH_COLS;
+    if (lcd_dpath[i].errlen && !lcd_dpath[i].errshow) {
+      /* error: after the normal view the message comes again */
+      lcd_dpath[i].errshow = true;
+      lcd_scroll_restart(i);
+      moved = true;
+      continue;
+    }
+    uint8_t len = lcd_scroll_len(i);
+    uint8_t last = len > LCD_PATH_COLS ? len - LCD_PATH_COLS : 0;
     if (lcd_dpath[i].off >= last) {
+      if (lcd_err_shown(i)) {
+        /* message done: show the normal view for a while */
+        lcd_dpath[i].errshow = false;
+        lcd_dpath[i].off  = 0;
+        lcd_dpath[i].next = getticks() + LCD_ERR_NORMAL;
+        moved = true;
+        continue;
+      }
+      if (!last) continue;                /* fits: nothing to scroll */
       lcd_dpath[i].off = 0;
       lcd_dpath[i].next = getticks() + LCD_SCROLL_PAUSE;
     } else {
@@ -578,7 +652,8 @@ static void lcd_draw_devices(void) {
   lcd_dev_drawn = getticks();
 }
 #else
-void lcd_note_track(uint8_t part, uint8_t track) { (void)part; (void)track; }
+void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) { (void)part; (void)track; (void)sector; }
+void lcd_note_file(const uint8_t *name) { (void)name; }
 void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) {
   (void)dev; (void)talk; (void)sa; (void)open; (void)buf; (void)n;
 }
@@ -617,6 +692,21 @@ void lcd_update_device_addr(void) {
 void lcd_update_disk_status(void) {
   bool visible = true;
 #ifdef LCD_DEVVIEW
+  /* keep the status text of an error per device; 00-19 and 73 are none */
+  uint8_t i = md_active ? md_cur : 0, n = 0;
+  if (i < MD_MAX_DEVICES) {
+    if (current_error >= 20 && current_error != 73) {
+      lcd_dpath[i].err[n++] = ' ';         /* "#11:0 62,..." not "#11:062" */
+      for (uint8_t k = 0; n < LCD_ERR_MAX && k < CONFIG_ERROR_BUFFER_SIZE &&
+                          error_buffer[k] != 13; k++)
+        lcd_dpath[i].err[n++] = error_buffer[k];
+    }
+    if (n != lcd_dpath[i].errlen || n) {
+      lcd_dpath[i].errlen  = n;
+      lcd_dpath[i].errshow = true;
+      lcd_scroll_restart(i);
+    }
+  }
   lcd_dev_dirty = true;
   return;
 #endif
@@ -715,6 +805,12 @@ void handle_lcd(void) {
   if (lcd_current_screen == SCRN_STATUS && !lcd_timer) {
     if (lcd_path_update() || lcd_path_scroll())
       lcd_dev_dirty = true;
+    for (uint8_t i = 0; i < MD_MAX_DEVICES; i++)
+      if (lcd_dev_track[i] && !(lcd_dev_idle & (1 << i)) &&
+          time_after(getticks(), lcd_dev_access[i] + LCD_IDLE_TIME)) {
+        lcd_dev_idle |= 1 << i;           /* came to rest: show the sector */
+        lcd_dev_dirty = true;
+      }
     if (lcd_dev_dirty && time_after(getticks(), lcd_dev_drawn + LCD_DEV_INTERVAL))
       lcd_draw_devices();
   }
