@@ -114,6 +114,9 @@ jobs:
           cp sim/petsd-sim.py sim/sd-empty.img.gz sim/README.md $P/
           cp sim/petsdsim/petsdsim.exe sim/psd2sim/target/release/psd2sim.exe $P/
           cp sim/firmware/petsd2-dip40-emu.bin $P/firmware/
+          # petSD2 (DIP40) fuer die echte Hardware: per BOOTSEL auf den Pico 2
+          # ziehen; wird lokal gebaut und liegt fertig im Repo
+          cp sim/firmware/petsd2-dip40.uf2 $P/firmware/
           cp obj-m1284p-petSD+/NODISKEMU.elf "$P/firmware/NODISKEMU-petSD+.elf"
           # fuer die echte Hardware: .bin fuer den SD-Bootloader (mit CRC und
           # Geraetekennung), .hex fuer einen Programmer (ISP)
@@ -140,6 +143,9 @@ jobs:
           Real petSD+ hardware: firmware\NODISKEMU-petSD+.bin on the SD
           card for the bootloader, or firmware\NODISKEMU-petSD+.hex for an
           ISP programmer. Same firmware as the simulation uses.
+          Real petSD2 (DIP40): hold BOOTSEL on the Pico 2, plug it in, copy
+          firmware\petsd2-dip40.uf2 to the drive that appears. Same source
+          as the simulated petSD2 firmware (petsd2-dip40-emu.bin).
 
           Details: README.md
           EOF
