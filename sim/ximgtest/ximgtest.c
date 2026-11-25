@@ -67,8 +67,11 @@ static void rd(void)
 
 static void tick(void) { t += STEP; rd(); }
 
+static uint8_t extra_pull = 0;      /* e.g. REN held low like the PET */
+
 static void set(uint8_t pull, uint8_t data)
 {
+    pull = (uint8_t)(pull | extra_pull);
     if (pull != own_pull || data != own_data) {
         own_pull = pull;
         own_data = data;
@@ -244,11 +247,13 @@ static void hal_close(void *ctx, uint8_t dev, uint8_t ch)
    The expected DAV state runs through the whole transfer (fast_start):
    the drive may already have put the next byte on the bus. */
 static uint8_t fast_dav, fast_nrfd;
+static int fast_first;                 /* first byte after M-E: the drive may take a while */
 
 static void fast_start(void)
 {
     fast_dav = 0;                   /* DAV released */
     fast_nrfd = 0;                  /* NRFD released */
+    fast_first = 1;
     set(0, 0);
 }
 
@@ -260,9 +265,11 @@ static int fast_send(const uint8_t *d, int n)
     for (i = 0; i < n; i++) {
         set((uint8_t)(own_pull ^ SL_IEEE_DAV), (uint8_t)~d[i]);
         fast_nrfd ^= SL_IEEE_NRFD;
-        if (bwait(SL_IEEE_NRFD, fast_nrfd, 10000) < 0) {
+        if (bwait(SL_IEEE_NRFD, fast_nrfd, fast_first ? 2000000 : 1000000) < 0) {
+            fprintf(stderr, "fast_send: no ack for byte %d (bus %02x)\n", i, in);
             return i;
         }
+        fast_first = 0;
     }
     set(own_pull, 0);               /* release the data lines */
     return n;
@@ -389,7 +396,7 @@ static int mw(uint8_t dev, uint16_t addr, const uint8_t *d, int n)
 }
 
 /* whole disk with the drive code (4040, D64): read (backup) or write+verify (restore) */
-static int d4040_setup(uint8_t dev, uint8_t par[25])
+static int d4040_setup(uint8_t dev, uint8_t par[25], int type)
 {
     static const uint8_t bufind[12] = { 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x32, 0x33, 0x40 };
     static const uint8_t ring[] = { 1, 2, 7, 8, 9, 10, 11 };
@@ -401,7 +408,8 @@ static int d4040_setup(uint8_t dev, uint8_t par[25])
     hal_recv(NULL, dev, 15, b, 41, 5000);
     hal_send(NULL, dev, 0xf2, (const uint8_t *)"#0", 2, 1);
     hal_recv(NULL, dev, 15, b, 41, 2000);
-    hal_send(NULL, dev, 0x6f, (const uint8_t *)"U1:2 0 18 0", 11, 1);   /* disk ID into header of job 0 */
+    /* disk ID into header of job 0 */
+    hal_send(NULL, dev, 0x6f, (const uint8_t *)(type == XIMG_D64 ? "U1:2 0 18 0" : "U1:2 0 39 0"), 11, 1);
     hal_recv(NULL, dev, 15, b, 41, 2000);
     if (mw(dev, D4040_ORG, d4040_code, (int)sizeof(d4040_code)) < 0) {
         fprintf(stderr, "M-W failed\n");
@@ -419,26 +427,30 @@ static int d4040_setup(uint8_t dev, uint8_t par[25])
 
 static int track_test(uint8_t dev, const char *name, int write)
 {
-    uint8_t par[25], b[300];
-    uint8_t *img = calloc(683, 256);
-    int i, n, total = 0, bad = 0;
+    uint8_t par[25], b[300], order[29];
+    int type = getenv("XIMG_TYPE") ? atoi(getenv("XIMG_TYPE")) : XIMG_D64;
+    int skew = getenv("XIMG_SKEW") ? atoi(getenv("XIMG_SKEW")) : 1;
+    int tracks = type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 : 154;
+    int blocks = type == XIMG_D64 ? 683 : type == XIMG_D80 ? 2083 : 4166;
+    uint8_t *img = calloc((size_t)blocks, 256);
+    int i, n, total = 0, bad = 0, last_ns = -1;
     uint64_t t0, tt;
     FILE *f;
 
     if (write) {
         f = fopen(name, "rb");
-        if (!f || fread(img, 256, 683, f) != 683) {
+        if (!f || fread(img, 256, (size_t)blocks, f) != (size_t)blocks) {
             fprintf(stderr, "image %s\n", name);
             return 1;
         }
         fclose(f);
     }
-    if (d4040_setup(dev, par) < 0) {
+    if (d4040_setup(dev, par, type) < 0) {
         return 1;
     }
     t0 = t;
-    for (int tr = 1; tr <= 35; tr++) {
-        int ns = ximg_sectors(XIMG_D64, (uint8_t)tr);
+    for (int tr = 1; tr <= tracks; tr++) {
+        int ns = ximg_sectors((uint8_t)type, (uint8_t)tr);
         char me[6] = { 'M', '-', 'E', 0, 0, 0 };
         uint16_t entry = write ? D4040_WRITE : D4040_READ;
         tt = t;
@@ -448,6 +460,19 @@ static int track_test(uint8_t dev, const char *name, int write)
             fprintf(stderr, "M-W par failed\n");
             return 1;
         }
+        if (ns != last_ns) {            /* sector order with skew */
+            int k = 0, st;
+            for (st = 0; st < skew; st++) {
+                for (i = st; i < ns; i += skew) {
+                    order[k++] = (uint8_t)i;
+                }
+            }
+            if (mw(dev, (uint16_t)(D4040_PAR + D4040_ORDER), order, ns) < 0) {
+                fprintf(stderr, "M-W order failed\n");
+                return 1;
+            }
+            last_ns = ns;
+        }
         me[3] = (char)(entry & 255);
         me[4] = (char)(entry >> 8);
         hal_send(NULL, dev, 0x6f, (const uint8_t *)me, 5, 1);
@@ -455,8 +480,10 @@ static int track_test(uint8_t dev, const char *name, int write)
         if (write) {
             uint8_t res[30];
             int nr = (ns + 1) & ~1;
-            for (i = 0; i < ns; i++) {
-                uint8_t *blk = img + ximg_offset(XIMG_D64, (uint8_t)tr, (uint8_t)i);
+            for (int k = 0; k < ns; k++) {
+                uint8_t *blk;
+                i = order[k];
+                blk = img + ximg_offset((uint8_t)type, (uint8_t)tr, (uint8_t)i);
                 uint8_t sum[2];
                 fletcher(blk, sum);
                 if (getenv("XIMG_BADSUM") && tr == atoi(getenv("XIMG_BADSUM")) && i == 3) {
@@ -494,13 +521,13 @@ static int track_test(uint8_t dev, const char *name, int write)
                     bad++;
                     fprintf(stderr, "track %d sector %d: job result %d\n", tr, b[0], b[1]);
                 }
-                memcpy(img + ximg_offset(XIMG_D64, (uint8_t)tr, b[0]), b + 2, 256);
+                memcpy(img + ximg_offset((uint8_t)type, (uint8_t)tr, b[0]), b + 2, 256);
                 total++;
             }
         }
         fast_end();
         hal_recv(NULL, dev, 15, b, 41, 2000);
-        if (verbose) {
+        if (verbose && (verbose > 1 || tr % 10 == 1 || tr == tracks)) {
             fprintf(stderr, "  track %2d: %2d sectors %.1f ms, status %.10s\n", tr, ns, (t - tt) / 1e9, b);
         }
     }
@@ -508,12 +535,12 @@ static int track_test(uint8_t dev, const char *name, int write)
         fprintf(stderr, "hold\n");
         sleep(40);
     }
-    fprintf(stderr, "%s: %d blocks, %d bad, %.3f s bus time, %.2f KB/s\n", write ? "write+verify" : "read",
-            total, bad, (t - t0) / 1e12, 174848.0 / 1024 / ((t - t0) / 1e12));
+    fprintf(stderr, "%s D%d skew %d: %d blocks, %d bad, %.3f s bus time, %.2f KB/s\n", write ? "write+verify" : "read",
+            type, skew, total, bad, (t - t0) / 1e12, blocks * 256.0 / 1024 / ((t - t0) / 1e12));
     if (!write) {
         f = fopen(name, "wb");
         if (f) {
-            fwrite(img, 256, 683, f);
+            fwrite(img, 256, (size_t)blocks, f);
             fclose(f);
         }
     }
@@ -662,6 +689,10 @@ fastmode:
     off = simlink_start_time(sl, slot);
     t = 0;
     rd();
+    if (getenv("XIMG_REN")) {
+        extra_pull = SL_IEEE_REN;
+        set(0, 0);
+    }
     wait_us((uint64_t)(boot_s * 1e6));     /* drive powers up */
 
     t0 = t;
@@ -694,6 +725,17 @@ fastmode:
                     fprintf(stderr, " %02x", b[c]);
                 }
                 fputc('\n', stderr);
+            } else if (*p == 'r') {
+                /* r<hex>: M-R 2 bytes */
+                unsigned ad = (unsigned)strtoul(p + 1, NULL, 16);
+                char mr[6] = { 'M', '-', 'R', (char)(ad & 255), (char)(ad >> 8), 2 };
+                int k;
+                hal_send(NULL, x.dev, 0x6f, (const uint8_t *)mr, 6, 1);
+                wait_us(getenv("XIMG_MRWAIT") ? (uint64_t)atoi(getenv("XIMG_MRWAIT")) : 0);
+                k = hal_recv(NULL, x.dev, 15, b, 2, 2000);
+                fprintf(stderr, "M-R $%04X: %02x %02x (%d)\n", ad, b[0], b[1], k);
+            } else if (*p == 'o') {
+                hal_send(NULL, x.dev, 0xff, (const uint8_t *)"I0", 2, 1);
             } else if (*p == 'w') {
                 wait_us((uint64_t)atoi(p + 1) * 1000);
             } else if (*p == '!') {

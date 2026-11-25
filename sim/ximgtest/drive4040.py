@@ -7,7 +7,7 @@
 #                  Sektornummer, Job-Ergebnis (1 = ok), 256 Datenbytes.
 #                  Reihenfolge = Fertigstellung.
 #   WRITE (ORG+3): Spur schreiben und pruefen. Vom Controller je Sektor
-#                  (aufsteigend) 256 Datenbytes + 2 Bytes Pruefsumme.
+#                  (in der Reihenfolge der Sektorliste P+$37) 256 Datenbytes + 2 Bytes Pruefsumme.
 #                  Danach Pruefdurchgang: Lese-Jobs, Pruefsumme auf dem
 #                  DOS-Prozessor, Vergleich. Zurueck: N Ergebnisbytes
 #                  (auf gerade Anzahl aufgefuellt): 1 = ok, 7 = Pruefsumme
@@ -57,14 +57,15 @@ class Asm:
                 self.c[pos + 1] = t >> 8
         return self.c
 
-def build(org=0x2000, par=0x2300):
+def build(org=0x2000, par=0x2340):
     P = par
     T, N, DRV, R = P, P + 1, P + 2, P + 3
     JOBN, BUFH, IDJ = P + 4, P + 14, P + 24
     SEC, TRY = P + 25, P + 35
     NEXT, SENT, SLOT, RES, ID1, ID2, CMDJ, WSLOT, CNT, RTMP = (P + 45, P + 46, P + 47, P + 48,
                                                          P + 49, P + 50, P + 51, P + 52, P + 53, P + 54)
-    SUM, RESULT = P + 0x40, P + 0x80
+    ORDER = P + 0x37                      # Sektorreihenfolge (29)
+    SUM, RESULT = P + 0x54, P + 0x8E      # 2*29, 29 -> bis P+0xAA
     A = Asm(org)
     A.j(0x4C, 'rentry')
     A.j(0x4C, 'wentry')
@@ -84,8 +85,8 @@ def build(org=0x2000, par=0x2300):
 
     # queue: Slot X mit naechstem Sektor (falls vorhanden), dann setjob
     A.L('queue')
-    A.a(0xAD, NEXT); A.a(0xCD, N); A.r(0xB0, 'qret')
-    A.a(0x9D, SEC); A.a(0xEE, NEXT); A.b(0xA9, 2); A.a(0x9D, TRY)
+    A.a(0xAC, NEXT); A.a(0xCC, N); A.r(0xB0, 'qret')            # LDY NEXT / CPY N
+    A.a(0xB9, ORDER); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.b(0xA9, 2); A.a(0x9D, TRY)
     A.L('setjob')
     A.a(0xBD, JOBN); A.b(0x0A, 0x0A, 0x0A, 0xA8)
     A.a(0xAD, ID1); A.a(0x99, HDRS); A.a(0xAD, ID2); A.a(0x99, HDRS + 1)
@@ -135,7 +136,7 @@ def build(org=0x2000, par=0x2300):
     A.L('rl2'); A.a(0x2C, PAD2); A.r(0x50, 'rl2')                 # BVC: DAV noch low
     A.a(0xAD, IEEEDI); A.patchable(0x99, 'q2'); A.b(0xA5, PHI); A.a(0x8D, PAD2); A.b(0xC8)
     A.r(0xD0, 'rl1')
-    A.a(0xAD, NEXT); A.b(0x0A, 0xA8)
+    A.a(0xAC, NEXT); A.a(0xB9, ORDER); A.b(0x0A, 0xA8)
     A.L('rs1'); A.a(0x2C, PAD2); A.r(0x70, 'rs1')
     A.a(0xAD, IEEEDI); A.a(0x99, SUM); A.b(0xA5, RLO); A.a(0x8D, PAD2)
     A.L('rs2'); A.a(0x2C, PAD2); A.r(0x50, 'rs2')
@@ -199,7 +200,7 @@ def build(org=0x2000, par=0x2300):
     A.L('wfree')
     A.j(0x20, 'patch'); A.j(0x20, 'rcvblk')
     A.a(0xAE, WSLOT)
-    A.a(0xAD, NEXT); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.j(0x20, 'setjob')
+    A.a(0xAC, NEXT); A.a(0xB9, ORDER); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.j(0x20, 'setjob')
     A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'ws1'); A.b(0xA2, 0)
     A.L('ws1'); A.a(0x8E, WSLOT); A.j(0x4C, 'wloop')
     A.L('wdrain'); A.b(0xA2, 0)
@@ -243,7 +244,7 @@ def fletcher(data):
     return a, s2
 
 if __name__ == '__main__':
-    ORG, PAR = 0x2000, 0x2300
+    ORG, PAR = 0x2000, 0x2340
     code, lab = build(ORG, PAR)
     print('/* drive4040.py: Spur lesen/schreiben+pruefen, Code bei $%04X (%d Bytes), Parameter bei $%04X */'
           % (ORG, len(code), PAR))
@@ -251,6 +252,7 @@ if __name__ == '__main__':
     print('#define D4040_PAR 0x%04x' % PAR)
     print('#define D4040_READ 0x%04x' % ORG)
     print('#define D4040_WRITE 0x%04x' % (ORG + 3))
+    print('#define D4040_ORDER 0x37   /* offset of the sector order table in the parameters */')
     print('static const uint8_t d4040_code[] = {')
     for i in range(0, len(code), 12):
         print('    ' + ', '.join('0x%02x' % v for v in code[i:i + 12]) + ',')
