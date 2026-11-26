@@ -990,6 +990,16 @@ static void ximg_dataphase(void) {
     ximg_set_track(t);
     lcd_note_track(current_part, t, 0);   // progress, while the drive waits
     lcd_refresh();
+#ifdef XIMG_TEST_STALL                   // test only: hang once at this track
+    {
+      static bool stalled;
+      if (!stalled && t == XIMG_TEST_STALL) {
+        stalled = true;
+        while (!ieee488_ATN_received)
+          ;
+      }
+    }
+#endif
     ok = ximg_dotrack(&bad);
     ximg_track_done(ok, bad);
     total += bad;
