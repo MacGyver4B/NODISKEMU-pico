@@ -1,5 +1,14 @@
 10 rem disk-imager v4: pet directs, petsd does the data phase, whole disk in one pass
 20 fori=0to7:readx:poke634+i,x:next:data173,16,232,41,64,208,249,96
+21 rem 826: copy file #3 (ximgdrv.prg, after load address) via m-w to floppy $2000
+22 fori=0to143:readx:poke826+i,x:next
+23 data169,0,141,242,3,169,32,141,243,3,169,0,133,150,141,240,3,162,3,32,198
+24 data255,32,207,255,172,240,3,153,208,3,200,140,240,3,165,150,141,244,3,208,4
+25 data192,32,208,232,32,204,255,173,240,3,240,89,162,15,32,201,255,169,77,32,210
+26 data255,169,45,32,210,255,169,87,32,210,255,173,242,3,32,210,255,173,243,3,32
+27 data210,255,173,240,3,32,210,255,169,0,141,241,3,172,241,3,185,208,3,32,210
+28 data255,238,241,3,173,241,3,205,240,3,208,236,32,204,255,24,173,242,3,109,240
+29 data3,141,242,3,144,3,238,243,3,173,244,3,208,3,76,68,3,96
 30 print"{clr}disk-imager v4":input"(b)ackup/(r)estore";m$
 40 input"floppy unit";fu:input"petsd unit";su:input"image";n$
 45 ti$="000000":db=1:hz=50:dr=0:rem db=0: no step output, hz: 50 or 60 hz pet
@@ -52,14 +61,12 @@
 530 print#15,"u1:2 0 18 0":gosub800:ifethenreturn
 540 print#15,"b-p:2,2":get#2,a$:ifa$=chr$(65)thendt=64
 550 return
-600 open3,su,3,"ximgdrv.prg,p,r":get#3,a$,a$:a=8192
-620 s$="":z=0:fori=1to32:get#3,a$:s$=s$+chr$(asc(a$+chr$(0))):z=st:ifztheni=33
-630 next:print#15,"m-w"chr$(aand255)chr$(int(a/256))chr$(len(s$))s$:a=a+len(s$):ifz=0then620
+600 open3,su,3,"ximgdrv.prg,p,r":get#3,a$,a$:sys826
 640 close3:d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(0)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
 670 o$="":fori=0to28:o$=o$+chr$(i):next:print#15,"m-w"chr$(122)chr$(35)chr$(29)o$
-680 restore:fori=0to7:readx:next:z$="":fori=1to16:readx:z$=z$+chr$(x):next
+680 restore:fori=0to151:readx:next:z$="":fori=1to16:readx:z$=z$+chr$(x):next
 685 ifty=64thenfori=1to8:readx:z$=left$(z$,i-1)+chr$(x)+mid$(z$,i+1):next
 690 print#15,"m-w"chr$(240)chr$(35)chr$(16)z$:d$="parameters":gosub770:return
 695 data40,29,54,27,65,25,78,23,117,29,131,27,142,25,155,23
