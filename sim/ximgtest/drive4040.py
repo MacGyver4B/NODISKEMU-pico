@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Laufwerkscode fuer den DOS-Prozessor der 4040 (per M-E, Interrupts aus).
+# Laufwerkscode fuer den DOS-Prozessor der 4040 (per M-E). Interrupts sind an:
+# ein ATN vom Controller bricht ihn ab (ATNIRQ des DOS, danach IDLE).
 # Der Laufwerks-Prozessor arbeitet unveraendert ueber die Job-Queue.
 #
 # Einstiege:
@@ -92,6 +93,8 @@ def build(org=0x2000, par=0x2340):
 
     # ---------------- gemeinsame Unterprogramme
     A.L('init')
+    A.b(0x58)                             # CLI: ATN (einzige IRQ-Quelle, ATNIRQ setzt
+                                          # den Stack zurueck) bricht den Code ab
     A.a(0xAD, PAD2); A.b(0x09, DAVO | EOIO | RFDO, 0x29, 0xFF ^ DACO)
     A.a(0x8D, PAD2); A.b(0x85, PHI)
     A.b(0x29, 0xFF ^ DAVO, 0x85, PLO)
