@@ -259,13 +259,13 @@ static void fast_start(void)
 
 /* send n bytes: we toggle DAV per byte (data inverted, the drive stores the
    raw port value), the drive acks by toggling NRFD */
-static int fast_send(const uint8_t *d, int n)
+static int fast_send_t(const uint8_t *d, int n, uint64_t first_us)
 {
     int i;
     for (i = 0; i < n; i++) {
         set((uint8_t)(own_pull ^ SL_IEEE_DAV), (uint8_t)~d[i]);
         fast_nrfd ^= SL_IEEE_NRFD;
-        if (bwait(SL_IEEE_NRFD, fast_nrfd, fast_first ? 2000000 : 1000000) < 0) {
+        if (bwait(SL_IEEE_NRFD, fast_nrfd, (fast_first || i == 0) ? first_us : 1000000) < 0) {
             fprintf(stderr, "fast_send: no ack for byte %d (bus %02x)\n", i, in);
             return i;
         }
@@ -273,6 +273,11 @@ static int fast_send(const uint8_t *d, int n)
     }
     set(own_pull, 0);               /* release the data lines */
     return n;
+}
+
+static int fast_send(const uint8_t *d, int n)
+{
+    return fast_send_t(d, n, 2000000);
 }
 
 static void fletcher(const uint8_t *d, uint8_t out[2])
@@ -596,17 +601,33 @@ static void hal_note(void *ctx, const char *m)
     fprintf(stderr, "note: %s\n", m);
 }
 
+static void hal_fast_begin(void *ctx) { (void)ctx; fast_start(); }
+static void hal_fast_end(void *ctx) { (void)ctx; fast_end(); }
+
+static int hal_fast_send(void *ctx, const uint8_t *d, uint16_t n, uint32_t first_ms)
+{
+    (void)ctx;
+    return fast_send_t(d, n, (uint64_t)first_ms * 1000);
+}
+
+static int hal_fast_recv(void *ctx, uint8_t *d, uint16_t n, uint32_t first_ms)
+{
+    (void)ctx;
+    return fast_recv(d, n, (uint64_t)first_ms * 1000);
+}
+
 int main(int argc, char **argv)
 {
     static ximg_t x;
     ximg_hal_t h = { NULL, hal_send, hal_recv, hal_close, hal_img_read, hal_img_write,
-                     hal_ask, hal_progress, hal_note };
+                     hal_ask, hal_progress, hal_note,
+                     hal_fast_begin, hal_fast_send, hal_fast_recv, hal_fast_end };
     int c, r, restore;
     double boot_s = 3.0;
     uint64_t t0;
 
     x.dev = 8;
-    while ((c = getopt(argc, argv, "vd:D:f:V:yb:g:")) != -1) {
+    while ((c = getopt(argc, argv, "vd:D:f:V:yb:g:S")) != -1) {
         switch (c) {
         case 'v': verbose++; break;
         case 'd': x.dev = (uint8_t)atoi(optarg); break;
@@ -616,6 +637,7 @@ int main(int argc, char **argv)
         case 'y': opt_yes = 1; break;
         case 'b': boot_s = atof(optarg); break;
         case 'g': gap_us = (unsigned)atoi(optarg); break;
+        case 'S': x.opt_slow = 1; break;
         default: goto usage;
         }
     }
@@ -756,8 +778,9 @@ fastmode:
         quit(0);
     }
     r = restore ? ximg_restore(&x, &h) : ximg_backup(&x, &h);
-    fprintf(stderr, "%s: result %d, %s \"%s\",%s D%u, %u blocks, %u errors, last status %s\n",
-            restore ? "restore" : "backup", r, "disk", x.name, x.id, x.type, x.blocks, x.errors, x.msg);
+    fprintf(stderr, "%s: result %d, disk \"%s\",%s D%u, DOS %u, %s mode, %u blocks, %u errors, last status %s\n",
+            restore ? "restore" : "backup", r, x.name, x.id, x.type, x.dos, x.fast ? "track" : "block",
+            x.blocks, x.errors, x.msg);
     fprintf(stderr, "time %.3f s (bus time), %lu bus transactions, %lu bytes out, %lu bytes in\n",
             (t - t0) / 1e12, n_cmd, n_bytes_out, n_bytes_in);
     if (!restore) {

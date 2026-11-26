@@ -12,7 +12,7 @@ ifneq ($(OS),Windows_NT)
   endif
 endif
 
-ximgtest: ximgtest.c fast4040.h drive4040.h ../../src/ximg.c ../../src/ximg.h $(SIMLINK_DIR)/simlink.c $(SIMLINK_DIR)/simlink.h
+ximgtest: ximgtest.c fast4040.h drive4040.h ../../src/ximg.c ../../src/ximg.h ../../src/ximg_drive.h $(SIMLINK_DIR)/simlink.c $(SIMLINK_DIR)/simlink.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ ximgtest.c ../../src/ximg.c $(SIMLINK_DIR)/simlink.c $(LDLIBS)
 
 clean:
@@ -25,3 +25,6 @@ fast4040.h: fast4040.py
 
 drive4040.h: drive4040.py
 	python3 drive4040.py > $@
+
+../../src/ximg_drive.h: drive4040.py
+	python3 drive4040.py --src > $@

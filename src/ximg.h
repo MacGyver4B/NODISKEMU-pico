@@ -1,13 +1,22 @@
 /* NODISKEMU - disk imager in controller mode (X-IMG)
  *
  * Copies a whole disk between a real CBM drive on the IEEE-488 bus and a
- * disk image (D64/D80/D82), in both directions. Only standard DOS commands
- * (U1/U2/B-P/N/I) are used for now. The module knows nothing about the
- * hardware or the file system: both are reached through ximg_hal_t, so the
- * same code runs in the host test program (sim/ximgtest, simlink) and later
- * in the firmware (ieee.c in controller mode, FatFs).
+ * disk image (D64/D80/D82), in both directions. The module knows nothing
+ * about the hardware or the file system: both are reached through
+ * ximg_hal_t, so the same code runs in the host test program
+ * (sim/ximgtest, simlink) and in the firmware (ieee.c in controller mode,
+ * FatFs).
  *
- * Memory: two 256-byte block buffers (read/write and verify).
+ * Two ways to move the blocks:
+ * - track mode (DOS 2.1: 4040, DOS 2.7: 8050/8250/SFD-1001): small drive
+ *   code on the DOS processor (M-W/M-E) puts jobs for a whole track into
+ *   the job queue and moves the blocks with a two-wire handshake. Restore
+ *   checks every block with a checksum on the DOS processor (write verify
+ *   without sending the data back). Needs the fast_* functions of the HAL.
+ * - block mode (all other drives, e.g. 2031, or without fast_*): U1/U2 per
+ *   block, verify by reading back.
+ *
+ * Memory: two 256-byte block buffers.
  */
 #ifndef XIMG_H
 #define XIMG_H
@@ -20,6 +29,11 @@
 #define XIMG_D82 82
 #define XIMG_D67 67     /* placeholder: DOS 1 (2040/3040), not supported yet */
 #define XIMG_D71 71     /* placeholder: 1571, not supported yet */
+
+/* DOS families (x->dos) */
+#define XIMG_DOS_OTHER 0    /* block mode only (2031, unknown) */
+#define XIMG_DOS_21    21   /* 4040 */
+#define XIMG_DOS_27    27   /* 8050, 8250, SFD-1001 */
 
 /* results */
 #define XIMG_OK         0
@@ -36,7 +50,7 @@
 /* questions for the user (ask callback): return 1 = yes */
 #define XIMG_Q_FORMAT_OTHER 1   /* target disk has another format: format? */
 #define XIMG_Q_FORMAT       2   /* format target disk? */
-#define XIMG_Q_VERIFY       3   /* verify? */
+#define XIMG_Q_VERIFY       3   /* verify? (block mode only) */
 #define XIMG_Q_RETRY_FORMAT 4   /* errors: format, test, rewrite? */
 
 /* progress phases */
@@ -63,22 +77,39 @@ typedef struct {
     int (*ask)(void *ctx, int question);
     void (*progress)(void *ctx, int phase, uint8_t track, uint8_t tracks, uint16_t errors);
     void (*note)(void *ctx, const char *msg);  /* text for the user (status, errors) */
+    /* optional fast transfer after M-E of the drive code (NULL: block mode).
+       Per byte: the sender puts the byte on DIO and toggles DAV, the
+       receiver acks by toggling NRFD. Data on the bus is inverted against
+       the normal IEEE sense (raw port value of the drive).
+       fast_begin: DAV/NRFD released, expected states reset.
+       fast_send/fast_recv: return the number of bytes moved.
+       fast_end: wait >= 200 us before the next ATN, so the drive sees the
+       last ack (with ATN the drive hardware pulls NRFD/NDAC itself). */
+    void (*fast_begin)(void *ctx);
+    int (*fast_send)(void *ctx, const uint8_t *d, uint16_t n, uint32_t first_ms);
+    int (*fast_recv)(void *ctx, uint8_t *d, uint16_t n, uint32_t first_ms);
+    void (*fast_end)(void *ctx);
 } ximg_hal_t;
 
 typedef struct {
     uint8_t  dev, drive;        /* CBM drive: unit, drive 0/1 */
     uint8_t  type;              /* XIMG_D64/80/82 */
+    uint8_t  dos;               /* XIMG_DOS_* (detected) */
+    uint8_t  fast;              /* track mode in use */
     uint8_t  tracks;
     uint16_t blocks;
     uint16_t errors;            /* bad blocks (read errors / write errors) */
     uint32_t size;              /* image size in bytes (backup: incl. error table) */
+    uint32_t etab;              /* backup: offset of the D64 error table, 0 = none yet */
     char     name[17];          /* disk name (from header) */
     char     id[3];
     uint8_t  status;            /* last drive status number */
     char     msg[42];           /* last drive status text */
-    /* restore options; set before ximg_restore (ask callback may change them) */
-    uint8_t  opt_format;        /* 0 = ask, 1 = always, 2 = never */
-    uint8_t  opt_verify;        /* 0 = ask, 1 = yes, 2 = no */
+    /* options; set before ximg_backup/ximg_restore */
+    uint8_t  opt_format;        /* restore: 0 = ask, 1 = always, 2 = never */
+    uint8_t  opt_verify;        /* restore, block mode: 0 = ask, 1 = yes, 2 = no */
+    uint8_t  opt_slow;          /* 1 = block mode even if track mode is possible */
+    uint8_t  last_ns;           /* track mode: sector count of the uploaded order */
     uint8_t  buf[256];          /* block buffer */
     uint8_t  vbuf[256];         /* verify buffer */
 } ximg_t;
@@ -89,6 +120,8 @@ uint8_t ximg_sectors(uint8_t type, uint8_t t);
 uint32_t ximg_offset(uint8_t type, uint8_t t, uint8_t s);
 /* type from image size (0 = unknown) */
 uint8_t ximg_type_from_size(uint32_t size);
+/* checksum of a block as the drive code computes it (2 bytes) */
+void ximg_checksum(const uint8_t *d, uint8_t out[2]);
 
 /* disk -> image. Detects the format, fills x->type/name/id/size, writes the
    image through img_write (with D64 error table if there were errors). */

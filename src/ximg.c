@@ -1,21 +1,36 @@
 /* NODISKEMU - disk imager in controller mode (X-IMG), see ximg.h
  *
- * Stage 1: the same procedure as the PET program diskimager v2, block by
- * block with U1/U2. It is the reference for the speedups that follow
- * (interleave, fewer status reads, drive code via M-W/M-E).
- *
- * Lessons from the PET program, kept here:
+ * Lessons from the PET program and the simulation, kept here:
  * - "I" before closing after a restore: otherwise DOS writes its cached
- *   BAM of the old disk over the freshly written header/BAM block.
+ *   BAM of the old disk over the freshly written header/BAM block (the
+ *   track mode writes past the BAM handling of DOS as well).
  * - "N" closes all channels in the drive: reopen the "#" channel afterwards.
  * - The status number is parsed leniently (the emulated 8250 with an 8050
  *   disk returns "2=" on track 78).
+ * - The command channel is opened like the PET does (OPEN 15,dev,15,"I0").
+ * - Track mode: no ATN between M-E and the end of the fast transfer, the
+ *   drive code runs with interrupts off and waits for the handshake.
  */
 #include <string.h>
 #include "ximg.h"
 
+#ifdef __AVR__
+#  include <avr/pgmspace.h>
+#  define XIMG_PROGMEM PROGMEM
+#  define XIMG_ROMBYTE(p) pgm_read_byte(p)
+#else
+#  define XIMG_PROGMEM
+#  define XIMG_ROMBYTE(p) (*(p))
+#endif
+#include "ximg_drive.h"
+
 #define CH_BUF 2                /* direct access channel "#" */
 #define CH_CMD 15
+
+/* track mode: free DOS buffers used as ring (code in 3-6, job 0 = ID),
+   high bytes from BUFIND (identical in DOS 2.1 and 2.7) */
+static const uint8_t ring_job[7] = { 1, 2, 7, 8, 9, 10, 11 };
+static const uint8_t ring_buf[7] = { 0x12, 0x13, 0x30, 0x31, 0x32, 0x33, 0x40 };
 
 /* ---------------------------------------------------------------- tables */
 
@@ -50,6 +65,26 @@ uint8_t ximg_type_from_size(uint32_t size)
     case 349696UL: case 351062UL:   return XIMG_D71;
     default:                        return 0;
     }
+}
+
+/* the same sum as the drive code: carry runs through, no CLC per byte */
+void ximg_checksum(const uint8_t *d, uint8_t out[2])
+{
+    uint16_t a = 0, c = 0, s2 = 0, t;
+    uint8_t s1 = 0;
+    uint16_t i;
+    for (i = 0; i < 256; i++) {
+        t = (uint16_t)(a + d[i] + c);
+        a = t & 255;
+        c = t >> 8;
+        s1 = (uint8_t)a;
+        t = (uint16_t)(a + s2 + c);
+        s2 = t & 255;
+        c = t >> 8;
+        a = s1;
+    }
+    out[0] = s1;
+    out[1] = (uint8_t)s2;
 }
 
 static void set_layout(ximg_t *x, uint8_t type)
@@ -107,8 +142,7 @@ static int status(const ximg_hal_t *h, ximg_t *x, uint32_t first_ms)
         n--;
     }
     x->msg[n] = 0;
-    /* lenient: up to two leading characters, '0'.. as digits (the 8250 with
-       a single-sided disk answers "2=" on track 78) */
+    /* lenient: up to two leading characters, '0'.. as digits */
     for (i = 0; i < 2 && i < n && x->msg[i] >= '0' && x->msg[i] <= '0' + 15; i++) {
         v = v * 10 + (x->msg[i] - '0');
     }
@@ -162,10 +196,12 @@ static int write_block(const ximg_hal_t *h, ximg_t *x, uint8_t t, uint8_t s, con
     return user_cmd(h, x, '2', t, s);
 }
 
+/* track mode needs buffer 0 for the "#" channel: its job header carries the
+   disk ID after every U1 */
 static int open_buffer(const ximg_hal_t *h, ximg_t *x)
 {
-    static const uint8_t hash = '#';
-    if (h->send(h->ctx, x->dev, 0xf0 | CH_BUF, &hash, 1, 1)) {
+    static const uint8_t name[2] = { '#', '0' };
+    if (h->send(h->ctx, x->dev, 0xf0 | CH_BUF, name, x->fast ? 2 : 1, 1)) {
         return -1;
     }
     return status(h, x, 2000);
@@ -182,9 +218,29 @@ static int initialize(const ximg_hal_t *h, ximg_t *x)
     return status(h, x, 5000);
 }
 
-/* open command + buffer channel. tolerant: a blank disk must not stop us.
-   The command channel is opened like the PET does (OPEN 15,dev,15,"I0"):
-   the 2031 (DOS 2.6) ignores commands on channel 15 without it. */
+/* DOS family from the reset vector of the drive ROM (M-R $FFFC) */
+static uint8_t detect_dos(const ximg_hal_t *h, ximg_t *x)
+{
+    static const char mr[6] = { 'M', '-', 'R', (char)0xfc, (char)0xff, 2 };
+    uint8_t v[2];
+    int n;
+    if (command(h, x, mr, 6)) {
+        return XIMG_DOS_OTHER;
+    }
+    n = h->recv(h->ctx, x->dev, CH_CMD, v, 2, 2000);
+    if (n == 2 && v[0] == 0x2b && v[1] == 0xd3) {
+        return XIMG_DOS_21;
+    }
+    if (n == 2 && v[0] == 0xb7 && v[1] == 0xf2) {
+        return XIMG_DOS_27;
+    }
+    status(h, x, 2000);                   /* drain what is left of the message */
+    return XIMG_DOS_OTHER;
+}
+
+/* open command + buffer channel, detect DOS. tolerant: a blank disk must not
+   stop us. The command channel is opened like the PET does
+   (OPEN 15,dev,15,"I0"): the 2031 (DOS 2.6) ignores commands without it. */
 static int drive_open(const ximg_hal_t *h, ximg_t *x, int tolerant)
 {
     char c[2];
@@ -206,6 +262,9 @@ static int drive_open(const ximg_hal_t *h, ximg_t *x, int tolerant)
         note(h, x->msg);
         return XIMG_E_DISK;
     }
+    x->dos = detect_dos(h, x);
+    x->fast = !x->opt_slow && h->fast_begin && h->fast_send && h->fast_recv && h->fast_end &&
+              (x->dos == XIMG_DOS_21 || x->dos == XIMG_DOS_27);
     e = open_buffer(h, x);
     if (e > 19 || e < 0) {
         note(h, x->msg);
@@ -239,6 +298,162 @@ static void progress(const ximg_hal_t *h, int phase, uint8_t t, ximg_t *x)
     }
 }
 
+/* D64 error table: code 1 = ok, otherwise DOS error - 18. On the first bad
+   block the whole table is created (all ok), so the order of the blocks
+   does not matter (track mode delivers them as they pass the head). */
+static int etab_mark(ximg_t *x, const ximg_hal_t *h, uint16_t n, uint8_t code)
+{
+    if (x->type != XIMG_D64) {
+        return 0;
+    }
+    if (!x->etab) {
+        uint16_t i;
+        if (code == 1) {
+            return 0;
+        }
+        x->etab = (uint32_t)x->blocks * 256UL;
+        memset(x->vbuf, 1, 256);
+        for (i = 0; i < x->blocks; i += 256) {
+            uint16_t k = (uint16_t)(x->blocks - i < 256 ? x->blocks - i : 256);
+            if (h->img_write(h->ctx, x->etab + i, x->vbuf, k)) {
+                return -1;
+            }
+        }
+    }
+    return h->img_write(h->ctx, x->etab + n, &code, 1);
+}
+
+/* -------------------------------------------------------------- track mode */
+
+/* M-W of n bytes (from flash if rom) in pieces of 32 */
+static int mem_write(const ximg_hal_t *h, ximg_t *x, uint16_t addr, const uint8_t *d, uint16_t n, int rom)
+{
+    char c[38];
+    uint16_t i, k, j;
+    for (i = 0; i < n; i += k) {
+        k = (uint16_t)(n - i > 32 ? 32 : n - i);
+        c[0] = 'M'; c[1] = '-'; c[2] = 'W';
+        c[3] = (char)((addr + i) & 255);
+        c[4] = (char)((addr + i) >> 8);
+        c[5] = (char)k;
+        for (j = 0; j < k; j++) {
+            c[6 + j] = (char)(rom ? XIMG_ROMBYTE(d + i + j) : d[i + j]);
+        }
+        if (command(h, x, c, (uint8_t)(6 + k)) || status(h, x, 2000)) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* drive code + parameters into the drive (again after N: format uses the
+   buffers). The disk ID comes from the header of job 0 (last U1). */
+static int fast_load(const ximg_hal_t *h, ximg_t *x)
+{
+    uint8_t p[XIMG_P_IDJ + 1];
+    uint8_t i;
+    if (mem_write(h, x, XIMG_DRV_ORG, ximg_drv_code, sizeof(ximg_drv_code), 1)) {
+        note(h, "drive code upload failed");
+        return -1;
+    }
+    memset(p, 0, sizeof(p));
+    p[XIMG_P_DRV] = x->drive;
+    p[XIMG_P_R] = sizeof(ring_job);
+    for (i = 0; i < sizeof(ring_job); i++) {
+        p[XIMG_P_JOBN + i] = ring_job[i];
+        p[XIMG_P_BUFH + i] = ring_buf[i];
+    }
+    p[XIMG_P_IDJ] = 0;
+    x->last_ns = 0;
+    return mem_write(h, x, XIMG_DRV_PAR, p, sizeof(p), 0);
+}
+
+/* one track in track mode.
+   mode XIMG_P_READ: blocks -> image, XIMG_P_SURFACE: read and discard,
+   XIMG_P_WRITE: image -> blocks with checksum test.
+   returns the number of bad blocks, -1 = protocol/drive failure */
+static int fast_track(const ximg_hal_t *h, ximg_t *x, uint8_t t, int mode)
+{
+    uint8_t ns = ximg_sectors(x->type, t);
+    uint8_t p[2], i;
+    char me[5];
+    int bad = 0;
+    uint16_t entry = mode == XIMG_P_WRITE ? XIMG_DRV_WRITE : XIMG_DRV_READ;
+
+    p[0] = t;
+    p[1] = ns;
+    if (mem_write(h, x, XIMG_DRV_PAR + XIMG_P_T, p, 2, 0)) {
+        return -1;
+    }
+    if (ns != x->last_ns) {
+        /* sector order: ascending. The job processor reads whatever pending
+           sector passes the head first, so a skew gains nothing (measured). */
+        for (i = 0; i < ns; i++) {
+            x->vbuf[i] = i;
+        }
+        if (mem_write(h, x, XIMG_DRV_PAR + XIMG_P_ORDER, x->vbuf, ns, 0)) {
+            return -1;
+        }
+        x->last_ns = ns;
+    }
+    me[0] = 'M'; me[1] = '-'; me[2] = 'E';
+    me[3] = (char)(entry & 255);
+    me[4] = (char)(entry >> 8);
+    if (command(h, x, me, 5)) {
+        return -1;
+    }
+    h->fast_begin(h->ctx);
+    if (mode == XIMG_P_WRITE) {
+        uint8_t sum[2];
+        uint8_t nr = (uint8_t)((ns + 1) & ~1);
+        for (i = 0; i < ns; i++) {
+            if (h->img_read(h->ctx, ximg_offset(x->type, t, i), x->buf, 256)) {
+                return -2;
+            }
+            ximg_checksum(x->buf, sum);
+            if (h->fast_send(h->ctx, x->buf, 256, i ? 1000 : 2000) != 256 ||
+                h->fast_send(h->ctx, sum, 2, 1000) != 2) {
+                return -1;
+            }
+        }
+        if (h->fast_recv(h->ctx, x->vbuf, nr, 5000) != nr) {
+            return -1;
+        }
+        for (i = 0; i < ns; i++) {
+            if (x->vbuf[i] != 1) {
+                bad++;
+            }
+        }
+    } else {
+        for (i = 0; i < ns; i++) {
+            uint8_t hd[2];
+            if (h->fast_recv(h->ctx, hd, 2, 5000) != 2 ||
+                h->fast_recv(h->ctx, x->buf, 256, 1000) != 256 || hd[0] >= ns) {
+                return -1;
+            }
+            if (hd[1] != 1) {
+                bad++;
+            }
+            if (mode == XIMG_P_READ) {
+                uint32_t o = ximg_offset(x->type, t, hd[0]);
+                if (hd[1] != 1) {
+                    memset(x->buf, 0, 256);
+                }
+                if (h->img_write(h->ctx, o, x->buf, 256) ||
+                    etab_mark(x, h, (uint16_t)(o / 256), hd[1])) {
+                    return -2;
+                }
+            }
+        }
+    }
+    h->fast_end(h->ctx);
+    if (status(h, x, 2000)) {
+        note(h, x->msg);
+        return -1;
+    }
+    return bad;
+}
+
 /* ------------------------------------------------------------------ backup */
 
 /* D64 error table code from a DOS error number */
@@ -252,15 +467,16 @@ int ximg_backup(ximg_t *x, const ximg_hal_t *h)
     int e;
     uint8_t t, s, ns;
     uint16_t n = 0;
-    uint32_t etab = 0;           /* != 0: offset of the D64 error table */
 
     x->errors = 0;
+    x->etab = 0;
     e = drive_open(h, x, 0);
     if (e) {
         return e;
     }
     /* format: 39/0 'C' = 8050/8250 (BAM 38/3 byte 5 tells 78/101 tracks),
-       18/0 'A' = 2031/4040 (DOS 2) */
+       18/0 'A' = 2031/4040 (DOS 2). The last U1 also puts the disk ID into
+       the header of job 0 for the track mode. */
     if (read_block(h, x, 39, 0, x->buf) == 0 && x->buf[2] == 'C') {
         x->type = XIMG_D80;
         copy_name(x, x->buf);
@@ -298,54 +514,50 @@ int ximg_backup(ximg_t *x, const ximg_hal_t *h)
     }
     x->size = (uint32_t)x->blocks * 256UL;
 
-    for (t = 1; t <= x->tracks; t++) {
-        progress(h, XIMG_P_READ, t, x);
-        ns = ximg_sectors(x->type, t);
-        for (s = 0; s < ns; s++, n++) {
-            int r = read_block(h, x, t, s, x->buf);
-            if (r) {
+    if (x->fast) {
+        if (fast_load(h, x)) {
+            e = XIMG_E_DRIVE;
+            goto out;
+        }
+        for (t = 1; t <= x->tracks; t++) {
+            int r;
+            progress(h, XIMG_P_READ, t, x);
+            r = fast_track(h, x, t, XIMG_P_READ);
+            if (r == -2) {
+                e = XIMG_E_IMAGE;
+                goto out;
+            }
+            if (r < 0) {
+                note(h, "track mode failed");
+                e = XIMG_E_DRIVE;
+                goto out;
+            }
+            x->errors = (uint16_t)(x->errors + r);
+        }
+    } else {
+        for (t = 1; t <= x->tracks; t++) {
+            progress(h, XIMG_P_READ, t, x);
+            ns = ximg_sectors(x->type, t);
+            for (s = 0; s < ns; s++, n++) {
+                int r = read_block(h, x, t, s, x->buf);
                 if (r < 0) {
                     note(h, "drive does not answer");
                     e = XIMG_E_NODRIVE;
                     goto out;
                 }
-                memset(x->buf, 0, 256);
-                x->errors++;
-                if (x->type == XIMG_D64) {
-                    uint8_t c = err_code(r);
-                    if (!etab) {
-                        /* first error: all blocks before were fine */
-                        uint8_t one[32];
-                        uint16_t i;
-                        etab = x->size;
-                        memset(one, 1, sizeof(one));
-                        for (i = 0; i < n; i += 32) {
-                            uint16_t k = (uint16_t)(n - i < 32 ? n - i : 32);
-                            if (h->img_write(h->ctx, etab + i, one, k)) {
-                                e = XIMG_E_IMAGE;
-                                goto out;
-                            }
-                        }
-                    }
-                    if (h->img_write(h->ctx, etab + n, &c, 1)) {
-                        e = XIMG_E_IMAGE;
-                        goto out;
-                    }
+                if (r) {
+                    memset(x->buf, 0, 256);
+                    x->errors++;
                 }
-            } else if (etab) {
-                static const uint8_t ok = 1;
-                if (h->img_write(h->ctx, etab + n, &ok, 1)) {
+                if (etab_mark(x, h, n, r ? err_code(r) : 1) ||
+                    h->img_write(h->ctx, (uint32_t)n * 256UL, x->buf, 256)) {
                     e = XIMG_E_IMAGE;
                     goto out;
                 }
             }
-            if (h->img_write(h->ctx, (uint32_t)n * 256UL, x->buf, 256)) {
-                e = XIMG_E_IMAGE;
-                goto out;
-            }
         }
     }
-    if (etab) {
+    if (x->etab) {
         x->size += x->blocks;
     }
     e = x->errors ? XIMG_E_ERRORS : XIMG_OK;
@@ -389,16 +601,33 @@ static int format_disk(ximg_t *x, const ximg_hal_t *h)
         return XIMG_E_DRIVE;
     }
     x->errors = 0;
-    for (t = 1; t <= x->tracks; t++) {
-        progress(h, XIMG_P_SURFACE, t, x);
-        ns = ximg_sectors(x->type, t);
-        for (s = 0; s < ns; s++) {
-            e = user_cmd(h, x, '1', t, s);
-            if (e < 0) {
-                return XIMG_E_NODRIVE;
+    if (x->fast) {
+        /* new disk ID into job 0, drive code again (N used the buffers) */
+        if (read_block(h, x, hdr_track(x->type), 0, x->vbuf) || fast_load(h, x)) {
+            note(h, x->msg);
+            return XIMG_E_DRIVE;
+        }
+        for (t = 1; t <= x->tracks; t++) {
+            int r;
+            progress(h, XIMG_P_SURFACE, t, x);
+            r = fast_track(h, x, t, XIMG_P_SURFACE);
+            if (r < 0) {
+                return XIMG_E_DRIVE;
             }
-            if (e) {
-                x->errors++;
+            x->errors = (uint16_t)(x->errors + r);
+        }
+    } else {
+        for (t = 1; t <= x->tracks; t++) {
+            progress(h, XIMG_P_SURFACE, t, x);
+            ns = ximg_sectors(x->type, t);
+            for (s = 0; s < ns; s++) {
+                e = user_cmd(h, x, '1', t, s);
+                if (e < 0) {
+                    return XIMG_E_NODRIVE;
+                }
+                if (e) {
+                    x->errors++;
+                }
             }
         }
     }
@@ -449,7 +678,8 @@ int ximg_restore(ximg_t *x, const ximg_hal_t *h)
             goto out;
         }
     }
-    /* target disk */
+    /* target disk (the U1 also puts its disk ID into the header of job 0:
+       the track mode writes with the ID of the disk, not of the image) */
     e = read_block(h, x, ht, 0, x->vbuf);
     if (e >= 20 && e <= 29) {
         uf = 1;                           /* unformatted */
@@ -467,6 +697,7 @@ int ximg_restore(ximg_t *x, const ximg_hal_t *h)
             } else {
                 mf = x->vbuf[5] != (x->type == XIMG_D80 ? 78 : 101);
             }
+            read_block(h, x, ht, 0, x->vbuf);   /* ID of the disk into job 0 again */
         }
     }
     if (lm && (uf || mf)) {
@@ -487,7 +718,7 @@ int ximg_restore(ximg_t *x, const ximg_hal_t *h)
         fo = x->opt_format == 1 ||
              (x->opt_format == 0 && h->ask && h->ask(h->ctx, XIMG_Q_FORMAT));
     }
-    if (!fo) {
+    if (!fo && !x->fast) {               /* track mode always verifies */
         vf = x->opt_verify == 1 ||
              (x->opt_verify == 0 && (!h->ask || h->ask(h->ctx, XIMG_Q_VERIFY)));
     }
@@ -498,36 +729,60 @@ again:
         if (e) {
             goto out;
         }
+    } else if (x->fast && fast_load(h, x)) {
+        e = XIMG_E_DRIVE;
+        goto out;
     }
     x->errors = 0;
-    n = 0;
-    for (t = 1; t <= x->tracks; t++) {
-        progress(h, XIMG_P_WRITE, t, x);
-        ns = ximg_sectors(x->type, t);
-        for (s = 0; s < ns; s++, n++) {
-            int r, tries;
-            if (h->img_read(h->ctx, (uint32_t)n * 256UL, x->buf, 256)) {
+    if (x->fast) {
+        for (t = 1; t <= x->tracks; t++) {
+            int r;
+            progress(h, XIMG_P_WRITE, t, x);
+            r = fast_track(h, x, t, XIMG_P_WRITE);
+            if (r > 0) {
+                r = fast_track(h, x, t, XIMG_P_WRITE);   /* once more */
+            }
+            if (r == -2) {
                 e = XIMG_E_IMAGE;
                 goto out;
             }
-            for (tries = 0; tries < 2; tries++) {
-                r = write_block(h, x, t, s, x->buf);
-                if (r < 0) {
-                    e = XIMG_E_NODRIVE;
+            if (r < 0) {
+                note(h, "track mode failed");
+                e = XIMG_E_DRIVE;
+                goto out;
+            }
+            x->errors = (uint16_t)(x->errors + r);
+        }
+    } else {
+        n = 0;
+        for (t = 1; t <= x->tracks; t++) {
+            progress(h, XIMG_P_WRITE, t, x);
+            ns = ximg_sectors(x->type, t);
+            for (s = 0; s < ns; s++, n++) {
+                int r, tries;
+                if (h->img_read(h->ctx, (uint32_t)n * 256UL, x->buf, 256)) {
+                    e = XIMG_E_IMAGE;
                     goto out;
                 }
-                if (r == 0 && vf) {
-                    r = read_block(h, x, t, s, x->vbuf);
-                    if (r == 0 && memcmp(x->buf, x->vbuf, 256)) {
-                        r = 25;           /* verify error */
+                for (tries = 0; tries < 2; tries++) {
+                    r = write_block(h, x, t, s, x->buf);
+                    if (r < 0) {
+                        e = XIMG_E_NODRIVE;
+                        goto out;
+                    }
+                    if (r == 0 && vf) {
+                        r = read_block(h, x, t, s, x->vbuf);
+                        if (r == 0 && memcmp(x->buf, x->vbuf, 256)) {
+                            r = 25;       /* verify error */
+                        }
+                    }
+                    if (r == 0) {
+                        break;
                     }
                 }
-                if (r == 0) {
-                    break;
+                if (r) {
+                    x->errors++;
                 }
-            }
-            if (r) {
-                x->errors++;
             }
         }
     }
