@@ -55,6 +55,9 @@
 #include "utils.h"
 #include "wrapops.h"
 #include "doscmd.h"
+#ifdef CONFIG_XIMG
+#  include "ximgdev.h"
+#endif
 #include "menu.h"
 #include "multidrive.h"
 
@@ -2022,6 +2025,13 @@ static void parse_xcommand(void) {
   clean_cmdbuffer();
 
   switch (command_buffer[1]) {
+#ifdef CONFIG_XIMG
+  case '-':
+    /* X-IMG: disk imager, data phase with a CBM floppy (ximgdev.c) */
+    ximg_command();
+    break;
+#endif
+
   case 'E':
     /* Change file extension mode */
     str = command_buffer+2;

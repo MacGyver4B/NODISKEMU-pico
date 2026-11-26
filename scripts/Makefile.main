@@ -88,6 +88,10 @@ ifeq ($(CONFIG_HAVE_IEEE),y)
   SRC += ieee.c
 endif
 
+ifeq ($(CONFIG_XIMG),y)
+  SRC += ximg.c ximgdev.c
+endif
+
 ifeq ($(CONFIG_UART_DEBUG),y)
   SRC += $(CONFIG_ARCH)/uart.c
 endif

@@ -85,3 +85,6 @@ CONFIG_LFUSE=0xF7
 # a menu system or to set the device address by jumpers:
 CONFIG_HW_ADDR_OR_BUTTONS=y
 CONFIG_IGNORE_CARD_DETECT=n
+
+# Disk imager: data phase with a CBM floppy, directed by the PET (X-IMG:)
+CONFIG_XIMG=y

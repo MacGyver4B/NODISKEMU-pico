@@ -51,6 +51,9 @@
 #include "diskchange.h"
 #include "diskio.h"
 #include "doscmd.h"
+#ifdef CONFIG_XIMG
+#  include "ximgdev.h"
+#endif
 #include "fatops.h"
 #include "fileops.h"
 #include "filesystem.h"
@@ -874,8 +877,119 @@ static void ieee488_Sniff(uint8_t sa, bool open) {
     }
   }
 done:
+#ifdef CONFIG_XIMG
+  if (ximg_armed_dev && sniff_dev == ximg_armed_dev && !sniff_talk && !open &&
+      n >= 3 && buf[0] == 'M' && buf[1] == '-' && buf[2] == 'E')
+    ximg_go = true;                       // data phase after the UNLISTEN
+#endif
   lcd_sniffed(sniff_dev, sniff_talk, sa, open, buf, n);
 }
+
+#ifdef CONFIG_XIMG
+/* --------------------------------------------------------------------------------------
+   X-IMG data phase (see ximgdev.h): the drive code on the CBM floppy and
+   petSD exchange a track with a two-wire handshake, no ATN involved.
+   Per byte the sender puts the byte on DIO and toggles DAV, the receiver
+   acks by toggling NRFD. On the bus is the raw port value of the drive
+   (inverted against the usual IEEE sense). Byte counts are always even,
+   so DAV and NRFD end released.
+*/
+static bool xi_dav_low, xi_nrfd_low;
+
+/* wait until DAV (or NRFD) has the level 'low'. false: timeout, ATN, IFC */
+static bool xi_wait(bool dav, bool low, uint16_t ms) {
+  tick_t end = getticks() + MS_TO_TICKS(ms) + 1;
+  for (;;) {
+    bool l = dav ? !ieee488_DAV() : !ieee488_NRFD();
+    if (l == low)
+      return true;
+    if (ieee488_ATN_received || ieee488_CheckIFC() || time_after(getticks(), end))
+      return false;
+  }
+}
+
+static bool xi_recv(uint8_t *d, uint16_t n, uint16_t first_ms) {
+  for (uint16_t i = 0; i < n; i++) {
+    xi_dav_low = !xi_dav_low;
+    if (!xi_wait(true, xi_dav_low, i ? 200 : first_ms))
+      return false;
+    d[i] = ~ieee488_Data();
+    xi_nrfd_low = !xi_nrfd_low;
+    ieee488_SetNRFD(!xi_nrfd_low);
+  }
+  return true;
+}
+
+static bool xi_send(const uint8_t *d, uint16_t n, uint16_t first_ms) {
+  for (uint16_t i = 0; i < n; i++) {
+    ieee488_SetData(~d[i]);
+    xi_dav_low = !xi_dav_low;
+    ieee488_SetDAV(!xi_dav_low);
+    xi_nrfd_low = !xi_nrfd_low;
+    if (!xi_wait(false, xi_nrfd_low, i ? 200 : first_ms))
+      return false;
+  }
+  return true;
+}
+
+static void xi_listen(void) {
+  ieee488_CtrlPortsListen();
+  ieee488_DataListen();
+  ieee488_SetNDAC(1);
+  ieee488_SetNRFD(1);
+}
+
+static void ximg_dataphase(void) {
+  uint8_t ns = ximg_nsec(), bad = 0, i;
+  uint8_t *b = ximg_block();
+  bool ok = true;
+
+  xi_dav_low = xi_nrfd_low = false;
+  if (ximg_dir() == 'R') {
+    // floppy -> petSD: per sector number, job result, 256 bytes
+    xi_listen();
+    for (i = 0; i < ns && ok; i++) {
+      uint8_t hd[2];
+      ok = xi_recv(hd, 2, i ? 2000 : 5000) && xi_recv(b, 256, 200) && hd[0] < ns;
+      if (ok) {
+        if (hd[1] != 1)
+          bad++;
+        // the drive waits for our ack of its next byte meanwhile
+        ok = ximg_put_block(hd[0], hd[1]);
+      }
+    }
+  } else {
+    // petSD -> floppy: per sector (ascending) 256 bytes + checksum,
+    // then the results of the verify pass from the drive
+    uint8_t sum[2];
+    ieee488_CtrlPortsTalk();
+    ieee488_DataTalk();
+    for (i = 0; i < ns && ok; i++)
+      ok = ximg_get_block(i, sum) && xi_send(b, 256, i ? 1000 : 3000) && xi_send(sum, 2, 200);
+    ieee488_SetData(0);                   // release the data lines
+    xi_listen();
+    if (ok) {
+      uint8_t nr = (uint8_t)((ns + 1) & ~1);
+      ok = xi_recv(b, nr, 5000);
+      for (i = 0; ok && i < ns; i++)
+        if (b[i] != 1)
+          bad++;
+    }
+  }
+  ximg_finish(ok, bad);
+  if (ieee488_ATN_received)
+    return;                               // aborted by the controller
+  // done: pull EOI until the next ATN (the ATN interrupt switches the
+  // bus drivers to listen mode, that releases EOI)
+  ieee488_DisableAtnInterrupt();
+  if (!ieee488_ATN_received) {
+    ieee488_CtrlPortsTalk();
+    ieee488_DataTalk();                   // TE also turns the data lines: released
+    ieee488_SetEOI(0);
+  }
+  ieee488_EnableAtnInterrupt();
+}
+#endif
 
 
 void handle_ieee488(void) {
@@ -1009,6 +1123,15 @@ void handle_ieee488(void) {
     if (cmd == IEEE_UNLISTEN) {           // UNLISTEN
       sniff_dev = 0;
       ieee488_Unlisten();
+#ifdef CONFIG_XIMG
+      if (ximg_go) {                      // M-E to the armed floppy: go
+        ximg_go = false;
+        while (!ieee488_ATN())            // wait for the end of the ATN cycle
+          if (ieee488_CheckIFC()) return;
+        ximg_dataphase();
+        return;
+      }
+#endif
     } else if (cmd == IEEE_UNTALK) {      // UNTALK
       sniff_dev = 0;
       ieee488_Untalk();
