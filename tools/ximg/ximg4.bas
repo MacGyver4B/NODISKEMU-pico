@@ -23,20 +23,24 @@
 115 d$="open #0":gosub770
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
+205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
 210 print#14,"x-img:b,"ty","n$:gosub850:d$="x-img:b":gosub770:ife then900
 220 gosub600:gosub400:gosub450:print#14,"x-img:e":gosub850
 230 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
-300 ty=val(right$(n$,2)):print#14,"x-img:r,"ty","n$:gosub850:d$="x-img:r":gosub770:ife then900
+300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
+305 ty=et
 310 gosub500:d$="disk type":gosub770:ifdt<>tythengosub950
 320 gosub600:gosub400:gosub450:print#15,"i0":gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 400 nt=35:ifty=80thennt=77
 410 ifty=82thennt=154
 415 tp=19:ifty=80thentp=24
-416 ifty=82thentp=32
-417 ifm$="r"thentp=tp*1.35
+416 ifty=82thentp=24
+417 ifm$="r"thentp=tp*1.4
+418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10
 420 tq=ti:ft=1:lt=nt:rt=0
-430 gosub700:ife=0thenreturn
+430 gosub700:ife=0andrt=0andft=1andlt=ntthengosub780
+431 ife=0thenreturn
 432 rt=rt+1:ifet<>ftthenrt=1
 434 ft=et:m$="aborted at track"+str$(et)+", retrying":gosub760
 436 ifrt<=3then445
@@ -85,6 +89,8 @@
 760 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}"left$(m$+"                                        ",39):return
 770 ifdbthenprint"{home}"left$("{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}",13+dr)d$tab(20)int(ti/hz*10)/10"s":dr=dr+1
 771 return
+780 v=int((ti-t0)/nt*10):poke1015,vand255:poke1016,int(v/256):poke1013,kk:poke1018,fu
+781 poke1017,(kk+fu+peek(1015)+peek(1016))and255:return
 800 input#15,e,e$,et,es:ife=73thene=0
 810 return
 850 input#14,e,e$,et,es:ifethenprint"petsd:"e;e$;et;es

@@ -988,8 +988,8 @@ static void ximg_dataphase(void) {
   for (;;) {
     uint8_t bad = 0;
     ximg_set_track(t);
-    lcd_note_track(current_part, t, 0);   // progress, while the drive waits
-    lcd_refresh();
+    // progress in the floppy's LCD line, while the drive waits: B = backup
+    lcd_ximg_progress(ximg_armed_dev, ximg_dir() == 'R' ? 'B' : 'R', t, last);
 #ifdef XIMG_TEST_STALL                   // test only: hang once at this track
     {
       static bool stalled;
@@ -1007,6 +1007,7 @@ static void ximg_dataphase(void) {
       break;
     t++;
   }
+  lcd_ximg_progress(0, 0, 0, 0);
   ximg_finish(ok, total);
   if (ieee488_ATN_received)
     return;                               // aborted by the controller

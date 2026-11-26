@@ -67,11 +67,11 @@ static void open_image(uint8_t *p, uint8_t m)
   uint8_t t = parse_num(&p);
 
   close_image();
-  if (t != XIMG_D64 && t != XIMG_D80 && t != XIMG_D82) {
+  if (t != 0 && t != XIMG_D64 && t != XIMG_D80 && t != XIMG_D82) {
     set_error(ERROR_SYNTAX_UNKNOWN);
     return;
   }
-  if (!*p) {
+  if (!*p || (t == 0 && m == 'B')) {
     set_error(ERROR_SYNTAX_NONAME);
     return;
   }
@@ -96,18 +96,40 @@ static void open_image(uint8_t *p, uint8_t m)
               res == FR_NO_FILE ? ERROR_FILE_NOT_FOUND : ERROR_DRIVE_NOT_READY);
     return;
   }
-  if (m == 'R' && ximg_type_from_size(fh.fsize) != t) {
-    f_close(&fh);
-    free_buffer(blk);
-    blk = NULL;
-    set_error(ERROR_IMAGE_INVALID);
-    return;
+  if (m == 'R') {
+    /* type 0: take it from the size (with or without error table) */
+    uint8_t ts = ximg_type_from_size(fh.fsize);
+    if (!ts || (t && ts != t)) {
+      f_close(&fh);
+      free_buffer(blk);
+      blk = NULL;
+      set_error(ERROR_IMAGE_INVALID);
+      return;
+    }
+    t = ts;
   }
   fh_open = true;
   mode = m;
   type = t;
   etab = 0;
   memset(tbad, 0, sizeof(tbad));
+  if (m == 'B') {
+    /* Allocate the whole image now: the cluster search of FatFs can take
+       seconds on a big, filled card. Here the PET waits for the status
+       anyway, during the data phase the floppy would wait for us. */
+    uint32_t size = (uint32_t)blocks() * 256;
+    if (f_lseek(&fh, size) != FR_OK || fh.fsize != size ||
+        f_sync(&fh) != FR_OK || f_lseek(&fh, 0) != FR_OK) {
+      f_close(&fh);
+      f_unlink(partition[current_part].fatfs, ops_scratch);
+      fh_open = false;
+      free_buffer(blk);
+      blk = NULL;
+      set_error(ERROR_DISK_FULL);
+      return;
+    }
+  }
+  set_error_ts(ERROR_OK, t, 0);         /* track field: image type */
 }
 
 static uint8_t tracks(void)

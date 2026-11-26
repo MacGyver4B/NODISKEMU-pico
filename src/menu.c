@@ -237,6 +237,23 @@ void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) {
   }
 }
 
+/* X-IMG data phase: progress in the line of the floppy (dev 0 = none) */
+static uint8_t lcd_xi_dev, lcd_xi_track, lcd_xi_last;
+static char    lcd_xi_dir;
+
+static void lcd_draw_devices(void);
+
+void lcd_ximg_progress(uint8_t dev, char dir, uint8_t track, uint8_t last) {
+  lcd_xi_dev = dev;
+  lcd_xi_dir = dir;
+  lcd_xi_track = track;
+  lcd_xi_last = last;
+  if (lcd_current_screen == SCRN_STATUS && !lcd_timer)
+    lcd_draw_devices();                   /* now: the main loop is not running */
+  else
+    lcd_dev_dirty = true;
+}
+
 static void lcd_put_dec(uint8_t v, uint8_t digits) {
   if (digits > 2) lcd_putc('0' + v / 100);
   lcd_putc('0' + v / 10 % 10);
@@ -635,7 +652,17 @@ static void lcd_draw_devices(void) {
     uint8_t addr = LCD_FIRST_ADDR + row, i;
     lcd_locate(0, row);
     i = md_active ? md_find(addr) : (addr == device_address ? 0 : MD_NO_DEVICE);
-    if (i != MD_NO_DEVICE && i < MD_MAX_DEVICES) {
+    if (lcd_xi_dev && addr == lcd_xi_dev) {
+      /* #10 X-IMG B 055/154 */
+      lcd_putc('#');
+      lcd_put_dec(addr, 2);
+      lcd_puts_P(PSTR(" X-IMG "));
+      lcd_putc(lcd_xi_dir);
+      lcd_putc(' ');
+      lcd_put_dec(lcd_xi_track, 3);
+      lcd_putc('/');
+      lcd_put_dec(lcd_xi_last, 3);
+    } else if (i != MD_NO_DEVICE && i < MD_MAX_DEVICES) {
       lcd_put_device(i);
     } else if (active_bus == IEEE488 && lcd_fdev[addr - LCD_FOREIGN_FIRST].seen) {
       lcd_put_foreign(addr);
@@ -652,6 +679,9 @@ static void lcd_draw_devices(void) {
   lcd_dev_drawn = getticks();
 }
 #else
+void lcd_ximg_progress(uint8_t dev, char dir, uint8_t track, uint8_t last) {
+  (void)dev; (void)dir; (void)track; (void)last;
+}
 void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) { (void)part; (void)track; (void)sector; }
 void lcd_note_file(const uint8_t *name) { (void)name; }
 void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) {

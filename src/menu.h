@@ -50,6 +50,7 @@ void lcd_refresh(void);
 void lcd_update_device_addr(void);
 void lcd_mark_selected(uint8_t addr);
 void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector);
+void lcd_ximg_progress(uint8_t dev, char dir, uint8_t track, uint8_t last);
 void lcd_note_file(const uint8_t *name);
 void lcd_foreign_reset(void);
 void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n);
@@ -76,6 +77,7 @@ static inline void lcd_refresh(void) {}
 static inline void lcd_update_device_addr(void) {}
 static inline void lcd_mark_selected(uint8_t addr) { (void)addr; }
 static inline void lcd_note_track(uint8_t part, uint8_t track, uint8_t sector) { (void)part; (void)track; (void)sector; }
+static inline void lcd_ximg_progress(uint8_t dev, char dir, uint8_t track, uint8_t last) { (void)dev; (void)dir; (void)track; (void)last; }
 static inline void lcd_note_file(const uint8_t *name) { (void)name; }
 static inline void lcd_foreign_reset(void) {}
 static inline void lcd_sniffed(uint8_t dev, bool talk, uint8_t sa, bool open, const uint8_t *buf, uint8_t n) { (void)dev; (void)talk; (void)sa; (void)open; (void)buf; (void)n; }
