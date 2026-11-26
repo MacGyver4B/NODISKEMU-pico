@@ -36,6 +36,10 @@ static const uint8_t ring_buf[7] = { 0x12, 0x13, 0x30, 0x31, 0x32, 0x33, 0x40 };
 
 uint8_t ximg_sectors(uint8_t type, uint8_t t)
 {
+    if (type == XIMG_D60 || type == XIMG_D90) {
+        /* hard disk: track = cylinder, 32 sectors per head, sector = head*32+s */
+        return type == XIMG_D60 ? 4 * 32 : 6 * 32;
+    }
     if (type == XIMG_D64) {
         return t <= 17 ? 21 : t <= 24 ? 19 : t <= 30 ? 18 : 17;
     }
@@ -62,6 +66,8 @@ uint8_t ximg_type_from_size(uint32_t size)
     case 533248UL: case 535331UL:   return XIMG_D80;
     case 1066496UL: case 1070662UL: return XIMG_D82;
     case 176640UL:                  return XIMG_D67;
+    case 5013504UL:                 return XIMG_D60;
+    case 7520256UL:                 return XIMG_D90;
     case 349696UL: case 351062UL:   return XIMG_D71;
     default:                        return 0;
     }
@@ -364,7 +370,6 @@ static int fast_load(const ximg_hal_t *h, ximg_t *x)
         p[XIMG_P_BUFH + i] = ring_buf[i];
     }
     p[XIMG_P_IDJ] = 0;
-    x->last_ns = 0;
     return mem_write(h, x, XIMG_DRV_PAR, p, sizeof(p), 0);
 }
 
@@ -385,17 +390,8 @@ static int fast_track(const ximg_hal_t *h, ximg_t *x, uint8_t t, int mode)
     if (mem_write(h, x, XIMG_DRV_PAR + XIMG_P_T, p, 2, 0)) {
         return -1;
     }
-    if (ns != x->last_ns) {
-        /* sector order: ascending. The job processor reads whatever pending
-           sector passes the head first, so a skew gains nothing (measured). */
-        for (i = 0; i < ns; i++) {
-            x->vbuf[i] = i;
-        }
-        if (mem_write(h, x, XIMG_DRV_PAR + XIMG_P_ORDER, x->vbuf, ns, 0)) {
-            return -1;
-        }
-        x->last_ns = ns;
-    }
+    /* sectors always ascending (the job processor reads whatever pending
+       sector passes the head first, so a skew gains nothing, measured) */
     me[0] = 'M'; me[1] = '-'; me[2] = 'E';
     me[3] = (char)(entry & 255);
     me[4] = (char)(entry >> 8);

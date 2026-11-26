@@ -432,13 +432,12 @@ static int d4040_setup(uint8_t dev, uint8_t par[25], int type)
 
 static int track_test(uint8_t dev, const char *name, int write)
 {
-    uint8_t par[25], b[300], order[29];
+    uint8_t par[25], b[300];
     int type = getenv("XIMG_TYPE") ? atoi(getenv("XIMG_TYPE")) : XIMG_D64;
-    int skew = getenv("XIMG_SKEW") ? atoi(getenv("XIMG_SKEW")) : 1;
     int tracks = type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 : 154;
     int blocks = type == XIMG_D64 ? 683 : type == XIMG_D80 ? 2083 : 4166;
     uint8_t *img = calloc((size_t)blocks, 256);
-    int i, n, total = 0, bad = 0, last_ns = -1;
+    int i, n, total = 0, bad = 0;
     uint64_t t0, tt;
     FILE *f;
 
@@ -465,19 +464,6 @@ static int track_test(uint8_t dev, const char *name, int write)
             fprintf(stderr, "M-W par failed\n");
             return 1;
         }
-        if (ns != last_ns) {            /* sector order with skew */
-            int k = 0, st;
-            for (st = 0; st < skew; st++) {
-                for (i = st; i < ns; i += skew) {
-                    order[k++] = (uint8_t)i;
-                }
-            }
-            if (mw(dev, (uint16_t)(D4040_PAR + D4040_ORDER), order, ns) < 0) {
-                fprintf(stderr, "M-W order failed\n");
-                return 1;
-            }
-            last_ns = ns;
-        }
         me[3] = (char)(entry & 255);
         me[4] = (char)(entry >> 8);
         hal_send(NULL, dev, 0x6f, (const uint8_t *)me, 5, 1);
@@ -487,7 +473,7 @@ static int track_test(uint8_t dev, const char *name, int write)
             int nr = (ns + 1) & ~1;
             for (int k = 0; k < ns; k++) {
                 uint8_t *blk;
-                i = order[k];
+                i = k;
                 blk = img + ximg_offset((uint8_t)type, (uint8_t)tr, (uint8_t)i);
                 uint8_t sum[2];
                 fletcher(blk, sum);
@@ -540,8 +526,8 @@ static int track_test(uint8_t dev, const char *name, int write)
         fprintf(stderr, "hold\n");
         sleep(40);
     }
-    fprintf(stderr, "%s D%d skew %d: %d blocks, %d bad, %.3f s bus time, %.2f KB/s\n", write ? "write+verify" : "read",
-            type, skew, total, bad, (t - t0) / 1e12, blocks * 256.0 / 1024 / ((t - t0) / 1e12));
+    fprintf(stderr, "%s D%d: %d blocks, %d bad, %.3f s bus time, %.2f KB/s\n", write ? "write+verify" : "read",
+            type, total, bad, (t - t0) / 1e12, blocks * 256.0 / 1024 / ((t - t0) / 1e12));
     if (!write) {
         f = fopen(name, "wb");
         if (f) {

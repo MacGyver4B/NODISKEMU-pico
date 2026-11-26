@@ -27,6 +27,8 @@
 #define XIMG_D64 64
 #define XIMG_D80 80
 #define XIMG_D82 82
+#define XIMG_D60 60     /* D9060: 153 cylinders x 4 heads x 32 sectors, backup only */
+#define XIMG_D90 90     /* D9090: 153 cylinders x 6 heads x 32 sectors, backup only */
 #define XIMG_D67 67     /* placeholder: DOS 1 (2040/3040), not supported yet */
 #define XIMG_D71 71     /* placeholder: 1571, not supported yet */
 
@@ -109,7 +111,6 @@ typedef struct {
     uint8_t  opt_format;        /* restore: 0 = ask, 1 = always, 2 = never */
     uint8_t  opt_verify;        /* restore, block mode: 0 = ask, 1 = yes, 2 = no */
     uint8_t  opt_slow;          /* 1 = block mode even if track mode is possible */
-    uint8_t  last_ns;           /* track mode: sector count of the uploaded order */
     uint8_t  buf[256];          /* block buffer */
     uint8_t  vbuf[256];         /* verify buffer */
 } ximg_t;

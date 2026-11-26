@@ -21,11 +21,13 @@
 90 ifa=183andb=242thendv=27
 95 ifa=197thenlg=1:dv=26:rem 2031: legacy d64
 96 ifa=142thenlg=2:dv=10:print#15,"i"+u$:rem 2040 dos 1: legacy d67
+97 ifa=20andb=242thendv=30:print#15,"m-r"chr$(157)chr$(16)chr$(1):get#15,a$:h3=asc(a$+chr$(0)):d3=-60*(h3=4)-90*(h3=6):ifd3=0thendv=0
 100 ifdv=0thenprint"drive not supported":goto900
 105 d$="dos detect":gosub770
 110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
 115 d$="open #0":gosub770
 117 iflgthen3000
+118 ifdv=30andm$="r"thenprint"hard disk: backup only":goto900
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
 205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
@@ -42,8 +44,9 @@
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 400 nt=35:ifty=80thennt=77
 410 ifty=82thennt=154
+413 ifty=60orty=90thennt=153
 415 tp=19:ifty=80thentp=24
-416 ifty=82thentp=24
+416 tp=tp-5*(ty=82):ifty=60orty=90thentp=ty*.83
 417 ifm$="r"thentp=tp*1.4
 418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10
 420 tq=ti:ft=1:lt=nt:rt=0
@@ -66,7 +69,8 @@
 490 ft=t:lt=t:gosub430
 495 f=t+1:iff<=ntthen485
 499 goto450
-500 dt=0:print#15,"u1:2 "u$" 39 0":gosub800:ifethen530
+500 dt=0:ifdv=30thendt=d3:print#15,"u1:2 "u$" 1 0":goto800
+501 print#15,"u1:2 "u$" 39 0":gosub800:ifethen530
 510 print#15,"b-p:2,2":get#2,a$:ifa$<>chr$(67)then530
 520 print#15,"u1:2 "u$" 38 3":gosub800:print#15,"b-p:2,5":get#2,a$:dt=82:ifasc(a$+chr$(0))=78thendt=80
 525 return
@@ -78,17 +82,17 @@
 640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(dn)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
-670 o$="":fori=0to28:o$=o$+chr$(i):next:print#15,"m-w"chr$(122)chr$(35)chr$(29)o$
 680 restore:fori=0to237:readx:next:z$="":fori=1to16:readx:z$=z$+chr$(x):next
 685 ifty=64thenfori=1to8:readx:z$=left$(z$,i-1)+chr$(x)+mid$(z$,i+1):next
+686 ifty=60orty=90thenz$=chr$(153)+chr$(ty*32/15)+mid$(z$,3)
 690 print#15,"m-w"chr$(240)chr$(35)chr$(16)z$:d$="parameters":gosub770:return
 695 data40,29,54,27,65,25,78,23,117,29,131,27,142,25,155,23
 696 data18,21,25,19,31,18,36,17
 697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201
 698 data255,173,226,3,141,227,3,172,227,3,185,58,3,32,210,255,238,227,3,173,227,3,205,225,3,208,236,76,162,2,169,0,133,160,133,150,173,229,3,133,212,173,228,3,32,215,240,173,230,3,133,165,32,9,241,173,232,3,133,212,173,231,3
 699 data32,215,240,173,233,3,32,147,241,173,234,3,141,235,3,173,64,232,9,2,141,64,232,44,64,232,48,251,173,64,232,41,253,141,64,232,169,60,141,33,232,44,64,232,16,251,169,52,141,33,232,206,235,3,208,215,32,174,241,76,185,241
-700 print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900
-710 print#15,"m-w"chr$(238)chr$(35)chr$(2)chr$(ft)chr$(lt+1):d$="x-img:a, range":gosub770
+700 o3=-(ty=60orty=90):print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900
+710 print#15,"m-w"chr$(238)chr$(35)chr$(2)chr$(ft-o3)chr$(lt+1-o3):d$="x-img:a, range":gosub770
 720 print"{home}{down}{down}{down}{down}{down}{down}track"str$(ft)" to"str$(lt)"      "
 730 print#15,"m-e"chr$(ad)chr$(32):t0=ti:tl=ti:v=0:x=0:q=-1
 732 if(peek(59408)and64)=0then740
@@ -109,7 +113,7 @@
 793 ifa$=chr$(20)andlen(l$)>0thenl$=left$(l$,len(l$)-1):printa$;:goto791
 794 ifa$>=" "andlen(l$)<8thenl$=l$+a$:printa$;
 795 goto791
-796 a$="n":print"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"format disk first (y/n)";a$:fm=(a$="y"):return
+796 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):return
 800 input#15,e,e$,et,es:ife=73thene=0
 810 return
 850 input#14,e,e$,et,es:ifethenprint"petsd:"e;e$;et;es
@@ -117,33 +121,32 @@
 900 close2:close14:close15:end
 950 print"formatting":print#15,"n"u$":imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
 960 close2:open2,fu,2,"#0":gosub500:return
-2000 data#4cef214c5122a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
+2000 data#4cea214c4e22a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
 2001 data#4323ddf0239004e8e8d0f7bdf1238d4423200000ee4323ad4323cdef23d0de60
 2002 data#58ad8002091c29fd8d8002850329ef8502a50329fb8504ad5b230a0a0aaabd21
 2003 data#108d7423bd22108d7523a9008d70238d71238d7723ae4623caa9ff9d5c23ca10
-2004 data#fa60ac7023cc4423b039b97a239d5c23ee7023a9029d6623bd47230a0a0aa8ad
-2005 data#7423992110ad7523992210ad4323992310bd5c23992410bc4723ad45230d7623
-2006 data#99031060bd51238d1a218d26218d37218d4e218d5f218d9a2160c901f0138d79
-2007 data#23bc5c23b9d123c901d006ad792399d1236020c420bd5c23aa8e0202a5028d80
-2008 data#02ae73232c820230fb8e0202a5038d80022c820210fba000be00008e0202a502
-2009 data#8d8002c8be00002c820230fb8e0202a5038d8002c8be00002c820210fbc000d0
-2010 data#da60a0002c800270fbad0002990000a5048d8002c82c800250fbad0002990000
-2011 data#a5038d8002c8d0dcac7023b97a230aa82c800270fbad0002999723a5048d8002
-2012 data#2c800250fbad0002999823a5038d800260a900850618a0007900008505650685
-2013 data#06a505c8d0f2ae7223bd5c230aa8a505d99723d008a506d99823d00160a9074c
-2014 data#da20a000bed1238e0202a5028d8002c8bed1232c820230fb8e0202a5038d8002
-2015 data#c8bed1232c820210fbcc7823d0d960204020a9808d7623a200208220e8ec4623
-2016 data#d0f7a200bd5c233031bc4723b903103029c902900ebc6623f009de6623209820
-2017 data#4c3a228d73238e722320f220ee7123ae7223a9ff9d5c23208220ad7123cd4423
-2018 data#f009e8ec4623d0bc4c0222a9ff8d020260204020a9908d7623ac442388a90199
-2019 data#d1238810faad7023cd4423f03eae7723bd5c233010bc4723b9031030f820da20
-2020 data#a9ff9d5c2320c420204221ae7723ac7023b97a239d5c23ee7023209820e8ec46
-2021 data#23d002a2008e77234c6522a200bd5c233010bc4723b9031030f820da20a9ff9d
-2022 data#5c23e8ec4623d0e5a9808d7623a9008d70238d7123a200208220e8ec4623d0f7
-2023 data#a200bd5c233037bc4723b90310302fc9029014bc6623f009de66232098204c1e
-2024 data#2320da204c13238e722320c420209121ae7223ee7123a9ff9d5c23208220ad71
-2025 data#23cd4423f009e8ec4623d0b64ce022ad442318690129fe8d782320c221a9ff8d
-2026 data#020260
+2004 data#fa60ac7023cc4423b037989d5c23ee7023a9029d6623bd47230a0a0aa8ad7423
+2005 data#992110ad7523992210ad4323992310bd5c23992410bc4723ad45230d76239903
+2006 data#1060bd51238d18218d24218d35218d4c218d5d218d952160c901f0138d7923bc
+2007 data#5c23b9d123c901d006ad792399d1236020c220bd5c23aa8e0202a5028d8002ae
+2008 data#73232c820230fb8e0202a5038d80022c820210fba000be00008e0202a5028d80
+2009 data#02c8be00002c820230fb8e0202a5038d8002c8be00002c820210fbc000d0da60
+2010 data#a0002c800270fbad0002990000a5048d8002c82c800250fbad0002990000a503
+2011 data#8d8002c8d0dcad70230aa82c800270fbad0002999723a5048d80022c800250fb
+2012 data#ad0002999823a5038d800260a900850618a000790000850565068506a505c8d0
+2013 data#f2ae7223bd5c230aa8a505d99723d008a506d99823d00160a9074cd820a000be
+2014 data#d1238e0202a5028d8002c8bed1232c820230fb8e0202a5038d8002c8bed1232c
+2015 data#820210fbcc7823d0d960204020a9808d7623a200208220e8ec4623d0f7a200bd
+2016 data#5c23c9c0b031bc4723b903103029c902900ebc6623f009de66232096204c3722
+2017 data#8d73238e722320f020ee7123ae7223a9ff9d5c23208220ad7123cd4423f009e8
+2018 data#ec4623d0ba4cfd21a9ff8d020260204020a9908d7623ac442388a90199d12388
+2019 data#10faad7023cd4423f03bae7723bd5c233010bc4723b9031030f820d820a9ff9d
+2020 data#5c2320c220204021ae7723ad70239d5c23ee7023209620e8ec4623d002a2008e
+2021 data#77234c6222a200bd5c233010bc4723b9031030f820d820a9ff9d5c23e8ec4623
+2022 data#d0e5a9808d7623a9008d70238d7123a200208220e8ec4623d0f7a200bd5c2330
+2023 data#37bc4723b90310302fc9029014bc6623f009de66232096204c182320d8204c0d
+2024 data#238e722320c220208c21ae7223ee7123a9ff9d5c23208220ad7123cd4423f009
+2025 data#e8ec4623d0b64cda22ad442318690129fe8d782320bd21a9ff8d020260
 3000 close2:open2,fu,2,"#":ty=64-3*(lg=2):ns=683-7*(lg=2):nt=35
 3002 restore:fori=1to262:readx:next:fori=0to187:readx:poke634+i,x:next
 3004 print"{home}{down}{down}{down}{down}{down}{down}legacy mode (u1/u2), d"mid$(str$(ty),2):ifm$="r"then3200

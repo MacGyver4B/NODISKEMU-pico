@@ -8,7 +8,7 @@
 #                  Sektornummer, Job-Ergebnis (1 = ok), 256 Datenbytes.
 #                  Reihenfolge = Fertigstellung.
 #   WRITE (ORG+3): Spur schreiben und pruefen. Vom Controller je Sektor
-#                  (in der Reihenfolge der Sektorliste P+$37) 256 Datenbytes + 2 Bytes Pruefsumme.
+#                  (aufsteigend 0,1,2..) 256 Datenbytes + 2 Bytes Pruefsumme.
 #                  Danach Pruefdurchgang: Lese-Jobs, Pruefsumme auf dem
 #                  DOS-Prozessor, Vergleich. Zurueck: N Ergebnisbytes
 #                  (auf gerade Anzahl aufgefuellt): 1 = ok, 7 = Pruefsumme
@@ -24,8 +24,9 @@
 #   AREAD (ORG+6), AWRITE (ORG+9): ganze Diskette in einem Durchgang, Spur
 #                  FIRST bis LAST-1 (LAST = letzte Spur + 1), je Spur wie READ/WRITE. Sektoren je Spur
 #                  aus der Zonentabelle ZT (bis 8 Paare: letzte Spur der
-#                  Zone + 1, Sektorzahl). Die Sektorliste P+$37 muss
-#                  0,1,2,..,28 enthalten (schreibt der Controller).
+#                  Zone + 1, Sektorzahl). Sektoren immer 0,1,2.. N-1.
+#                  D9060/D9090 (DOS 3.0): Spur = Zylinder (ab 0), N = Koepfe*32,
+#                  Sektornummer = Kopf*32+Sektor = Sektorbyte des Jobs.
 #
 # Pruefsumme (Controller rechnet genauso): a = 0, c = 0, s2 = 0
 #   je Byte b: a = a + b + c (c = Uebertrag), s1 = a; a = a + s2 + c, s2 = a; a = s1
@@ -71,7 +72,7 @@ def build(org=0x2000, par=0x2340):
     SEC, TRY = P + 25, P + 35
     NEXT, SENT, SLOT, RES, ID1, ID2, CMDJ, WSLOT, CNT, RTMP = (P + 45, P + 46, P + 47, P + 48,
                                                          P + 49, P + 50, P + 51, P + 52, P + 53, P + 54)
-    ORDER = P + 0x37                      # Sektorreihenfolge (29)
+    # P+$37..$53: frei (frueher Sektorreihenfolge, jetzt immer 0,1,2..)
     SUM, RESULT = P + 0x54, P + 0x8E      # 2*29, 29 -> bis P+0xAA
     FIRST, LAST, ZT = P + 0xAB, P + 0xAC, P + 0xAD   # ZT: 16 Bytes -> bis P+0xBC
     A = Asm(org)
@@ -80,7 +81,7 @@ def build(org=0x2000, par=0x2340):
     A.b(0xA2, 0, 0x2C)                    # AREAD: X = 0, BIT abs ueberspringt
     A.b(0xA2, 3)                          # AWRITE: X = 3 (Abstand rentry -> wentry im JMP-Tisch)
 
-    # ---------------- ganze Diskette (Sektorliste P+$37 = 0,1,2,.. vom Controller)
+    # ---------------- ganze Diskette
     A.a(0xBD, org + 1); A.j(0x8D, 'acall'); A.a(0xBD, org + 2); A.j(0x8D, 'acall2')
     A.a(0xAD, FIRST); A.a(0x8D, T)
     A.L('at'); A.b(0xA2, 0); A.a(0xAD, T)
@@ -109,7 +110,7 @@ def build(org=0x2000, par=0x2340):
     # queue: Slot X mit naechstem Sektor (falls vorhanden), dann setjob
     A.L('queue')
     A.a(0xAC, NEXT); A.a(0xCC, N); A.r(0xB0, 'qret')            # LDY NEXT / CPY N
-    A.a(0xB9, ORDER); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.b(0xA9, 2); A.a(0x9D, TRY)
+    A.b(0x98); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.b(0xA9, 2); A.a(0x9D, TRY)
     A.L('setjob')
     A.a(0xBD, JOBN); A.b(0x0A, 0x0A, 0x0A, 0xA8)
     A.a(0xAD, ID1); A.a(0x99, HDRS); A.a(0xAD, ID2); A.a(0x99, HDRS + 1)
@@ -159,7 +160,7 @@ def build(org=0x2000, par=0x2340):
     A.L('rl2'); A.a(0x2C, PAD2); A.r(0x50, 'rl2')                 # BVC: DAV noch low
     A.a(0xAD, IEEEDI); A.patchable(0x99, 'q2'); A.b(0xA5, PHI); A.a(0x8D, PAD2); A.b(0xC8)
     A.r(0xD0, 'rl1')
-    A.a(0xAC, NEXT); A.a(0xB9, ORDER); A.b(0x0A, 0xA8)
+    A.a(0xAD, NEXT); A.b(0x0A, 0xA8)
     A.L('rs1'); A.a(0x2C, PAD2); A.r(0x70, 'rs1')
     A.a(0xAD, IEEEDI); A.a(0x99, SUM); A.b(0xA5, RLO); A.a(0x8D, PAD2)
     A.L('rs2'); A.a(0x2C, PAD2); A.r(0x50, 'rs2')
@@ -195,7 +196,7 @@ def build(org=0x2000, par=0x2340):
     A.L('ri'); A.j(0x20, 'queue'); A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'ri')
     A.L('rmain'); A.b(0xA2, 0)
     A.L('rscan')
-    A.a(0xBD, SEC); A.r(0x30, 'rnext')
+    A.a(0xBD, SEC); A.b(0xC9, 0xC0); A.r(0xB0, 'rnext')   # frei = $FF (Sektor bis 191: D9090)
     A.a(0xBC, JOBN); A.a(0xB9, JOBS); A.r(0x30, 'rnext')
     A.b(0xC9, 2); A.r(0x90, 'rgood')
     A.a(0xBC, TRY); A.r(0xF0, 'rgood')
@@ -223,7 +224,7 @@ def build(org=0x2000, par=0x2340):
     A.L('wfree')
     A.j(0x20, 'patch'); A.j(0x20, 'rcvblk')
     A.a(0xAE, WSLOT)
-    A.a(0xAC, NEXT); A.a(0xB9, ORDER); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.j(0x20, 'setjob')
+    A.a(0xAD, NEXT); A.a(0x9D, SEC); A.a(0xEE, NEXT); A.j(0x20, 'setjob')
     A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'ws1'); A.b(0xA2, 0)
     A.L('ws1'); A.a(0x8E, WSLOT); A.j(0x4C, 'wloop')
     A.L('wdrain'); A.b(0xA2, 0)
@@ -288,7 +289,6 @@ def src_header(code, org, par):
            '#define XIMG_P_JOBN  4',
            '#define XIMG_P_BUFH  14',
            '#define XIMG_P_IDJ   24',
-           '#define XIMG_P_ORDER 0x37',
            '#define XIMG_P_FIRST 0xab',
            '#define XIMG_P_END   0xac   /* last track + 1 */',
            '#define XIMG_P_ZT    0xad',
@@ -310,7 +310,6 @@ if __name__ == '__main__':
     print('#define D4040_PAR 0x%04x' % PAR)
     print('#define D4040_READ 0x%04x' % ORG)
     print('#define D4040_WRITE 0x%04x' % (ORG + 3))
-    print('#define D4040_ORDER 0x37   /* offset of the sector order table in the parameters */')
     print('static const uint8_t d4040_code[] = {')
     for i in range(0, len(code), 12):
         print('    ' + ', '.join('0x%02x' % v for v in code[i:i + 12]) + ',')

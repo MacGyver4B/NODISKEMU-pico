@@ -19,7 +19,7 @@ bool    ximg_go;
 static FIL      fh;
 static bool     fh_open;
 static uint8_t  mode;                   /* 'B' backup, 'R' restore */
-static uint8_t  type;                   /* XIMG_D64/80/82 */
+static uint8_t  type;                   /* XIMG_D64/80/82, D60/D90 backup only */
 static uint8_t  track;                  /* current track of the data phase */
 static uint8_t  first, last;            /* armed track range */
 static uint8_t  tbad[154];              /* per track: bad blocks, 0xff = failed */
@@ -56,9 +56,17 @@ static void close_image(void)
   ximg_go = false;
 }
 
+static uint8_t tracks(void)
+{
+  /* D60/D90: track = cylinder (the drive counts from 0, we from 1) */
+  return type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 :
+         type == XIMG_D82 ? 154 : 153;
+}
+
 static uint16_t blocks(void)
 {
-  return type == XIMG_D64 ? 683 : type == XIMG_D80 ? 2083 : 4166;
+  return type == XIMG_D64 ? 683 : type == XIMG_D80 ? 2083 : type == XIMG_D82 ? 4166 :
+         (uint16_t)tracks() * ximg_sectors(type, 1);
 }
 
 static void open_image(uint8_t *p, uint8_t m)
@@ -68,7 +76,8 @@ static void open_image(uint8_t *p, uint8_t m)
   uint8_t t = parse_num(&p);
 
   close_image();
-  if (t != 0 && t != XIMG_D64 && t != XIMG_D80 && t != XIMG_D82) {
+  if (t != 0 && t != XIMG_D64 && t != XIMG_D80 && t != XIMG_D82 &&
+      !(m == 'B' && (t == XIMG_D60 || t == XIMG_D90))) {
     set_error(ERROR_SYNTAX_UNKNOWN);
     return;
   }
@@ -115,7 +124,7 @@ static void open_image(uint8_t *p, uint8_t m)
   if (m == 'R') {
     /* type 0: take it from the size (with or without error table) */
     uint8_t ts = ximg_type_from_size(fh.fsize);
-    if (!ts || (t && ts != t)) {
+    if (!ts || (t && ts != t) || ts == XIMG_D60 || ts == XIMG_D90) {
       f_close(&fh);
       free_buffer(blk);
       blk = NULL;
@@ -146,11 +155,6 @@ static void open_image(uint8_t *p, uint8_t m)
     }
   }
   set_error_ts(ERROR_OK, t, 0);         /* track field: image type */
-}
-
-static uint8_t tracks(void)
-{
-  return type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 : 154;
 }
 
 void ximg_command(void)
