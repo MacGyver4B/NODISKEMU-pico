@@ -62,6 +62,56 @@ def loader(writer):
     assert 0x0282 + len(c) <= 0x033A, len(c)
     return c
 
+# Legacy-Modus (U1/U2): BUF2 = 128 Bytes ab $033A (die schnellen Routinen
+# werden dort im Legacy-Modus nicht gebraucht), Parameter ab $03E0.
+LBUF, LLF, LCNT, LOFF, LIDX = 0x033A, 0x03E0, 0x03E1, 0x03E2, 0x03E3
+CHKIN, CHRIN = 0xFFC6, 0xFFCF
+
+def legacy():
+    """$027A: JMP RD / JMP WR. RD: Bytes OFF..CNT-1 von Datei LF in den
+    Puffer (LF = 0: Nullen). WR: Bytes OFF..CNT-1 aus dem Puffer in Datei LF."""
+    A = Asm(0x027A)
+    A.j(0x4C, 'rd'); A.j(0x4C, 'wr')
+    A.L('rd'); A.a(0xAE, LLF); A.r(0xF0, 'zero'); A.a(0x20, CHKIN)
+    A.a(0xAD, LOFF); A.a(0x8D, LIDX)
+    A.L('rl'); A.a(0x20, CHRIN); A.a(0xAC, LIDX); A.a(0x99, LBUF)
+    A.a(0xEE, LIDX); A.a(0xAD, LIDX); A.a(0xCD, LCNT); A.r(0xD0, 'rl')
+    A.L('done'); A.a(0x4C, CLRCHN)
+    A.L('zero'); A.a(0xAC, LOFF); A.b(0xA9, 0)
+    A.L('zl'); A.a(0x99, LBUF); A.b(0xC8); A.a(0xCC, LCNT); A.r(0xD0, 'zl'); A.b(0x60)
+    A.L('wr'); A.a(0xAE, LLF); A.a(0x20, CHKOUT); A.a(0xAD, LOFF); A.a(0x8D, LIDX)
+    A.L('wl'); A.a(0xAC, LIDX); A.a(0xB9, LBUF); A.a(0x20, CHROUT)
+    A.a(0xEE, LIDX); A.a(0xAD, LIDX); A.a(0xCD, LCNT); A.r(0xD0, 'wl')
+    A.j(0x4C, 'done')
+    c = A.done()
+    assert 0x027A + len(c) <= 0x033A
+    return c
+
+# Geraet-zu-Geraet in einem ATN-Zyklus: zuerst das fremde Geraet (P1/D1/S1),
+# zuletzt die petSD (P2/D2/S2); P = $40 TALK oder $20 LISTEN, S mit $60.
+# N Bytes (0 = 256); der PET quittiert als zusaetzlicher Hoerer mit und zaehlt.
+DP1, DD1, DS1, DP2, DD2, DS2, DN, DCNT = 0x03E4, 0x03E5, 0x03E6, 0x03E7, 0x03E8, 0x03E9, 0x03EA, 0x03EB
+LIST1, TKSA, UNTLK, UNLSN, ISOUR = 0xF0D7, 0xF193, 0xF1AE, 0xF1B9, 0xF109
+FA, C3P0, SATUS, BSOUR, VIA, IEEIS = 0xD4, 0xA0, 0x96, 0xA5, 0xE840, 0xE821
+
+def d2d(org):
+    A = Asm(org)
+    A.b(0xA9, 0); A.b(0x85, C3P0); A.b(0x85, SATUS)
+    A.a(0xAD, DD1); A.b(0x85, FA); A.a(0xAD, DP1); A.a(0x20, LIST1)       # ATN, P1|D1
+    A.a(0xAD, DS1); A.b(0x85, BSOUR); A.a(0x20, ISOUR)                     # S1, ATN bleibt
+    A.a(0xAD, DD2); A.b(0x85, FA); A.a(0xAD, DP2); A.a(0x20, LIST1)        # P2|D2
+    A.a(0xAD, DS2); A.a(0x20, TKSA)                                        # S2, PET hoert, ATN frei
+    A.a(0xAD, DN); A.a(0x8D, DCNT)
+    A.L('loop'); A.a(0xAD, VIA); A.b(0x09, 0x02); A.a(0x8D, VIA)      # NRFD frei
+    A.L('w1'); A.a(0x2C, VIA); A.r(0x30, 'w1')                          # warten DAV low
+    A.a(0xAD, VIA); A.b(0x29, 0xFD); A.a(0x8D, VIA)                     # NRFD aktiv
+    A.b(0xA9, 0x3C); A.a(0x8D, IEEIS)                                   # NDAC frei
+    A.L('w2'); A.a(0x2C, VIA); A.r(0x10, 'w2')                          # warten DAV high
+    A.b(0xA9, 0x34); A.a(0x8D, IEEIS)                                   # NDAC aktiv
+    A.a(0xCE, DCNT); A.r(0xD0, 'loop')
+    A.a(0x20, UNTLK); A.a(0x4C, UNLSN)                                  # UNTLK zieht ATN zuerst
+    return A.done()
+
 def lines(first, data, per, end=None):
     out = []; n = first
     for i in range(0, len(data), per):
@@ -76,4 +126,8 @@ if __name__ == '__main__':
     n = 2000
     for i in range(0, len(d), 32):
         print(f"{n} data#" + bytes(d[i:i + 32]).hex()); n += 1
-    print(f"mc {len(m)} loader {len(ld)} drive {len(d)}", file=sys.stderr)
+    lg = legacy(); dd = d2d(0x027A + len(lg))
+    assert 0x027A + len(lg) + len(dd) <= 0x033A
+    for l in lines(697, lg + dd, -(-(len(lg) + len(dd)) // 3)): print(l)
+    print(f"d2d at {0x027A + len(lg)} ({len(dd)} bytes)", file=sys.stderr)
+    print(f"mc {len(m)} loader {len(ld)} drive {len(d)} legacy {len(lg)}", file=sys.stderr)

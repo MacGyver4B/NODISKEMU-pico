@@ -10,17 +10,22 @@
 28 data141,240,3,104,168,76,175,2,173,244,3,208,20,160,0,32,8,3,72,200,32,8,3,141,10,3,104,141,9
 29 data3,76,148,2,173,240,3,240,3,32,58,3,96,185,0,0,96,201,65,144,3,233,55,96,41,15,96
 30 print"{clr}disk-imager v4":input"(b)ackup/(r)estore";m$
-40 input"floppy unit";fu:input"petsd unit";su:input"image";n$
-45 ti$="000000":db=1:hz=50:dr=0:rem db=0: no step output, hz: 50 or 60 hz pet
-50 open15,fu,15,"i0":open14,su,15:va=59456:d$="open, i0":gosub770
+40 print"floppy unit (unit:drive)? ";:gosub790:fu$=l$:input"petsd unit";su:input"image";n$
+42 fu=val(fu$):dn=0:fori=1tolen(fu$):c$=mid$(fu$,i,1):ifc$=":"orc$="."thendn=val(mid$(fu$,i+1))
+43 next:u$=mid$(str$(dn),2)
+45 ti$="000000":db=1:hz=50:dr=0:dp=1:iv=1:rem db=0: no step output, hz: 50/60 hz pet, dp=0: legacy via pet, iv: interleave
+50 open15,fu,15,"i"+u$:open14,su,15:va=59456:d$="open, i0":gosub770
 60 print#15,"m-r"chr$(252)chr$(255)chr$(2):get#15,a$,b$
 70 a=asc(a$+chr$(0)):b=asc(b$+chr$(0)):dv=0
 80 ifa=43andb=211thendv=21
 90 ifa=183andb=242thendv=27
+95 ifa=197thenlg=1:dv=26:rem 2031: legacy d64
+96 ifa=142thenlg=2:dv=10:print#15,"i"+u$:rem 2040 dos 1: legacy d67
 100 ifdv=0thenprint"drive not supported":goto900
 105 d$="dos detect":gosub770
 110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
 115 d$="open #0":gosub770
+117 iflgthen3000
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
 205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
@@ -31,8 +36,9 @@
 230 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 305 ty=et
-310 gosub500:d$="disk type":gosub770:ifdt<>tythengosub950
-320 gosub600:gosub400:gosub450:print#15,"i0":gosub800:print#14,"x-img:e":gosub850
+307 gosub796
+310 gosub500:d$="disk type":gosub770:ifdt<>tyorfmthengosub950
+320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 400 nt=35:ifty=80thennt=77
 410 ifty=82thennt=154
@@ -49,7 +55,7 @@
 438 m$="power-cycle the floppy, then press a key":gosub760
 440 geta$:ifa$=""then440
 442 rt=0
-445 close2:close15:open15,fu,15,"i0":open2,fu,2,"#0":gosub500:gosub600:goto430
+445 close2:close15:open15,fu,15,"i"+u$:open2,fu,2,"#0":gosub500:gosub600:goto430
 450 bt=0:nb=0:f=1
 455 print#14,"x-img:l,"f:input#14,e,e$,t,es:ift=0then470
 460 nb=nb+1:bt=bt+es:f=t+1:iff<=ntthen455
@@ -60,16 +66,16 @@
 490 ft=t:lt=t:gosub430
 495 f=t+1:iff<=ntthen485
 499 goto450
-500 dt=0:print#15,"u1:2 0 39 0":gosub800:ifethen530
+500 dt=0:print#15,"u1:2 "u$" 39 0":gosub800:ifethen530
 510 print#15,"b-p:2,2":get#2,a$:ifa$<>chr$(67)then530
-520 print#15,"u1:2 0 38 3":gosub800:print#15,"b-p:2,5":get#2,a$:dt=82:ifasc(a$+chr$(0))=78thendt=80
+520 print#15,"u1:2 "u$" 38 3":gosub800:print#15,"b-p:2,5":get#2,a$:dt=82:ifasc(a$+chr$(0))=78thendt=80
 525 return
-530 print#15,"u1:2 0 18 0":gosub800:ifethenreturn
+530 print#15,"u1:2 "u$" 18 0":gosub800:ifethenreturn
 540 print#15,"b-p:2,2":get#2,a$:ifa$=chr$(65)thendt=64
 550 return
 600 poke1010,0:poke1011,32:sys642
 610 n=peek(1010)+256*peek(1011)-8192:ifn<800thenprint"drive code upload:"n"bytes":goto900
-640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(0)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
+640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(dn)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
 670 o$="":fori=0to28:o$=o$+chr$(i):next:print#15,"m-w"chr$(122)chr$(35)chr$(29)o$
@@ -78,6 +84,9 @@
 690 print#15,"m-w"chr$(240)chr$(35)chr$(16)z$:d$="parameters":gosub770:return
 695 data40,29,54,27,65,25,78,23,117,29,131,27,142,25,155,23
 696 data18,21,25,19,31,18,36,17
+697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201
+698 data255,173,226,3,141,227,3,172,227,3,185,58,3,32,210,255,238,227,3,173,227,3,205,225,3,208,236,76,162,2,169,0,133,160,133,150,173,229,3,133,212,173,228,3,32,215,240,173,230,3,133,165,32,9,241,173,232,3,133,212,173,231,3
+699 data32,215,240,173,233,3,32,147,241,173,234,3,141,235,3,173,64,232,9,2,141,64,232,44,64,232,48,251,173,64,232,41,253,141,64,232,169,60,141,33,232,44,64,232,16,251,169,52,141,33,232,206,235,3,208,215,32,174,241,76,185,241
 700 print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900
 710 print#15,"m-w"chr$(238)chr$(35)chr$(2)chr$(ft)chr$(lt+1):d$="x-img:a, range":gosub770
 720 print"{home}{down}{down}{down}{down}{down}{down}track"str$(ft)" to"str$(lt)"      "
@@ -94,12 +103,19 @@
 771 return
 780 v=int((ti-t0)/nt*10):poke1015,vand255:poke1016,int(v/256):poke1013,kk:poke1018,fu
 781 poke1017,(kk+fu+peek(1015)+peek(1016))and255:return
+790 l$=""
+791 geta$:ifa$=""then791
+792 ifa$=chr$(13)thenprint:return
+793 ifa$=chr$(20)andlen(l$)>0thenl$=left$(l$,len(l$)-1):printa$;:goto791
+794 ifa$>=" "andlen(l$)<8thenl$=l$+a$:printa$;
+795 goto791
+796 a$="n":print"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"format disk first (y/n)";a$:fm=(a$="y"):return
 800 input#15,e,e$,et,es:ife=73thene=0
 810 return
 850 input#14,e,e$,et,es:ifethenprint"petsd:"e;e$;et;es
 860 return
 900 close2:close14:close15:end
-950 print"formatting":print#15,"n0:imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
+950 print"formatting":print#15,"n"u$":imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
 960 close2:open2,fu,2,"#0":gosub500:return
 2000 data#4cef214c5122a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
 2001 data#4323ddf0239004e8e8d0f7bdf1238d4423200000ee4323ad4323cdef23d0de60
@@ -128,3 +144,54 @@
 2024 data#2320da204c13238e722320c420209121ae7223ee7123a9ff9d5c23208220ad71
 2025 data#23cd4423f009e8ec4623d0b64ce022ad442318690129fe8d782320c221a9ff8d
 2026 data#020260
+3000 close2:open2,fu,2,"#":ty=64-3*(lg=2):ns=683-7*(lg=2):nt=35
+3002 restore:fori=1to262:readx:next:fori=0to187:readx:poke634+i,x:next
+3004 print"{home}{down}{down}{down}{down}{down}{down}legacy mode (u1/u2), d"mid$(str$(ty),2):ifm$="r"then3200
+3006 iflg=2thengosub3500
+3020 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
+3022 open4,su,4,n$+",p,w":input#14,e,e$:ife=63thenclose4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"file exists, replace (y/n)";a$:ifa$="y"thenopen4,su,4,"@:"+n$+",p,w":input#14,e,e$
+3024 ifethenprint"petsd:"e;e$:goto900
+3026 dimer%(690),u%(31):ec=0:k=0:tq=ti:poke996,64:poke997,fu:poke998,98:poke999,32:poke1000,su:poke1001,100
+3030 fort=1tont:gosub3400:print"{home}{down}{down}{down}{down}{down}{down}{down}track"str$(t)" of"str$(nt)"   ":b0=k:fori=0ton-1:u%(i)=0:next:s=0
+3040 fori=0ton-1:print#15,"u1:2 "u$t;s:input#15,e,e$,et,es
+3042 c=1:ife>=20ande<=29thenc=e-18
+3044 ife>0andc=1thenc=4
+3046 er%(b0+s)=c:k=k+1:ifc>1thenec=ec+1
+3047 ifiv>1thenb=b0+s:print#14,"p"chr$(4)chr$(0)chr$(band255)chr$(b/256)chr$(0)
+3048 ifethenpoke992,0:poke994,0:poke993,128:sys634:poke992,4:sys637:sys637:goto3060
+3049 ifdpandlg=1thenprint#15,"b-p:2,0":poke1002,0:sys727:goto3060
+3050 iflg=1thenprint#15,"b-p:2,0":poke994,0:poke993,128:poke992,2:sys634:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637:goto3060
+3051 ifdpthenprint#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:print#4,chr$(asc(a$+chr$(0)));:print#15,"b-p:2,1":poke1002,255:sys727:goto3060
+3052 print#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:poke826,asc(a$+chr$(0))
+3054 print#15,"b-p:2,1":poke994,1:poke993,128:poke992,2:sys634:poke994,0:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637
+3060 u%(s)=1:s=s+iv:ifs>=nthens=s-n
+3061 ifi<n-1thenifu%(s)thens=s+1:ifs>=nthens=0
+3062 ifi<n-1thenifu%(s)then3061
+3063 nexti:nextt:ifec=0then3090
+3072 fork=0tons-1step128:c=128:ifk+128>nsthenc=ns-k
+3074 forj=0toc-1:poke826+j,er%(k+j):next:poke992,4:poke994,0:poke993,c:sys637:nextk
+3090 close4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, bad sectors"ec:goto900
+3200 open4,su,4,n$+",p,r":input#14,e,e$:ifethenprint"petsd:"e;e$:goto900
+3201 gosub796
+3202 print#15,"u1:2 "u$" 18 0":input#15,e,e$:ifeorfmthenprint"formatting":print#15,"n"u$":imager,xi":input#15,e,e$:ifethenprint"format:"e;e$:goto900
+3204 close2:open2,fu,2,"#":iflg=2thengosub3500
+3206 tq=ti:ec=0:poke996,32:poke997,fu:poke998,98:poke999,64:poke1000,su:poke1001,100
+3210 fort=1tont:gosub3400:print"{home}{down}{down}{down}{down}{down}{down}{down}track"str$(t)" of"str$(nt)"   "
+3220 fors=0ton-1:iflg=2then3224
+3221 ifdpthenprint#15,"b-p:2,0":poke1002,0:sys727:goto3230
+3222 print#15,"b-p:2,0":poke994,0:poke993,128:poke992,4:sys634:poke992,2:sys637:poke992,4:sys634:poke992,2:sys637:goto3230
+3224 ifdpthenget#4,a$:print#15,"m-w"chr$(0)chr$(pg)chr$(1)chr$(asc(a$+chr$(0))):print#15,"b-p:2,1":poke1002,255:sys727:goto3230
+3225 poke994,0:poke993,128:poke992,4:sys634:print#15,"m-w"chr$(0)chr$(pg)chr$(1)chr$(peek(826)):print#15,"b-p:2,1"
+3226 poke994,1:poke992,2:sys637:poke994,0:poke992,4:sys634:poke992,2:sys637
+3230 print#15,"u2:2 "u$t;s:input#15,e,e$,et,es:ifethenec=ec+1
+3232 nexts:nextt:print#15,"i"+u$:close4
+3234 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, write errors"ec:goto900
+3400 n=21:ift>17thenn=19-(lg=2)
+3402 ift>24thenn=18
+3404 ift>30thenn=17
+3406 return
+3500 print#15,"b-p:2,1":print#2,chr$(170)chr$(85)chr$(170)chr$(85);:pg=0
+3502 forp=16to79:print#15,"m-r"chr$(1)chr$(p)chr$(1):get#15,a$:ifasc(a$+chr$(0))<>170then3506
+3504 print#15,"m-r"chr$(2)chr$(p)chr$(1):get#15,a$:ifasc(a$+chr$(0))=85thenpg=p:p=79
+3506 nextp:ifpg=0thenprint"drive buffer not found":goto900
+3508 return

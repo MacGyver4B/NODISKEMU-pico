@@ -1029,6 +1029,10 @@ void handle_ieee488(void) {
   uint8_t Device;                       // device number from cmd byte
   uint8_t sa;                           // secondary address from cmd byte
   uint8_t dev;                          // index of the addressed device
+  // A secondary address belongs to the device addressed last. One ATN
+  // cycle may address several devices (e.g. TALK 9, SA, LISTEN 11, SA for
+  // a transfer from a floppy to us); only our own secondary counts.
+  static bool prim_us;
 
   // If IFC was received during last iteration, reset bus interface now
   if (ieee488_IFCreceived || ieee488_CheckIFC()) ieee488_ProcessIFC();
@@ -1152,6 +1156,11 @@ void handle_ieee488(void) {
       continue;
     }
 #endif
+    if (cmd == IEEE_UNLISTEN || cmd == IEEE_UNTALK)
+      prim_us = false;
+    else if (cmd3 == IEEE_LISTEN || cmd3 == IEEE_TALK)
+      prim_us = md_find(Device) != MD_NO_DEVICE;
+
     if (cmd == IEEE_UNLISTEN) {           // UNLISTEN
       sniff_dev = 0;
       ieee488_Unlisten();
@@ -1198,6 +1207,8 @@ void handle_ieee488(void) {
         ieee488_ListenActive = false;
       }
     } else if (cmd4 == IEEE_SECONDARY) {  // DATA
+      if (!prim_us && !(sniff_dev && sa == 15))
+        continue;                         // another device's: next command
       while (!ieee488_ATN());             // Wait for ATN high
       if (ieee488_ListenActive) {
         printf("DTA L %d\r\n", sa);

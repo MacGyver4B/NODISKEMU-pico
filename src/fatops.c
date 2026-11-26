@@ -550,6 +550,18 @@ uint8_t fat_file_seek(buffer_t *buf, uint32_t position, uint8_t index) {
     if (fat_file_write(buf))
       return 1;
 
+  if (buf->write && !buf->recordlen) {
+    /* file open for writing: the next block goes to the new offset,  */
+    /* fat_file_write fills a gap beyond the end with zeros           */
+    if (buf->pvt.fat.fh.fsize >= pos)   // fat_file_write only seeks when
+      if (f_lseek(&buf->pvt.fat.fh, pos) != FR_OK) // fptr != end of file
+        return 1;
+    buf->fptr     = position;
+    buf->position = 2;
+    buf->lastused = 2;
+    return 0;
+  }
+
   if (buf->pvt.fat.fh.fsize >= pos) {
     FRESULT res = f_lseek(&buf->pvt.fat.fh, pos);
     if (res != FR_OK) {
