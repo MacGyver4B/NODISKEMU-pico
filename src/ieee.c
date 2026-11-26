@@ -53,6 +53,7 @@
 #include "doscmd.h"
 #ifdef CONFIG_XIMG
 #  include "ximgdev.h"
+#  include "parser.h"
 #endif
 #include "fatops.h"
 #include "fileops.h"
@@ -939,12 +940,11 @@ static void xi_listen(void) {
   ieee488_SetNRFD(1);
 }
 
-static void ximg_dataphase(void) {
-  uint8_t ns = ximg_nsec(), bad = 0, i;
+static bool ximg_dotrack(uint8_t *bad) {
+  uint8_t ns = ximg_nsec(), i;
   uint8_t *b = ximg_block();
   bool ok = true;
 
-  xi_dav_low = xi_nrfd_low = false;
   if (ximg_dir() == 'R') {
     // floppy -> petSD: per sector number, job result, 256 bytes
     xi_listen();
@@ -953,7 +953,7 @@ static void ximg_dataphase(void) {
       ok = xi_recv(hd, 2, i ? 2000 : 5000) && xi_recv(b, 256, 200) && hd[0] < ns;
       if (ok) {
         if (hd[1] != 1)
-          bad++;
+          (*bad)++;
         // the drive waits for our ack of its next byte meanwhile
         ok = ximg_put_block(hd[0], hd[1]);
       }
@@ -973,10 +973,31 @@ static void ximg_dataphase(void) {
       ok = xi_recv(b, nr, 5000);
       for (i = 0; ok && i < ns; i++)
         if (b[i] != 1)
-          bad++;
+          (*bad)++;
     }
   }
-  ximg_finish(ok, bad);
+  return ok;
+}
+
+static void ximg_dataphase(void) {
+  uint8_t t = ximg_first(), last = ximg_last();
+  uint16_t total = 0;
+  bool ok;
+
+  xi_dav_low = xi_nrfd_low = false;
+  for (;;) {
+    uint8_t bad = 0;
+    ximg_set_track(t);
+    lcd_note_track(current_part, t, 0);   // progress, while the drive waits
+    lcd_refresh();
+    ok = ximg_dotrack(&bad);
+    ximg_track_done(ok, bad);
+    total += bad;
+    if (!ok || t == last)
+      break;
+    t++;
+  }
+  ximg_finish(ok, total);
   if (ieee488_ATN_received)
     return;                               // aborted by the controller
   // done: pull EOI until the next ATN (the ATN interrupt switches the

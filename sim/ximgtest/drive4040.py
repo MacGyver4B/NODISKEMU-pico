@@ -20,6 +20,12 @@
 #                         schaltet DAV um, Floppy quittiert mit NRFD.
 #   Immer gerade Bytezahlen: danach sind DAV und NRFD wieder frei.
 #
+#   AREAD (ORG+6), AWRITE (ORG+9): ganze Diskette in einem Durchgang, Spur
+#                  FIRST bis LAST-1 (LAST = letzte Spur + 1), je Spur wie READ/WRITE. Sektoren je Spur
+#                  aus der Zonentabelle ZT (bis 8 Paare: letzte Spur der
+#                  Zone + 1, Sektorzahl). Die Sektorliste P+$37 muss
+#                  0,1,2,..,28 enthalten (schreibt der Controller).
+#
 # Pruefsumme (Controller rechnet genauso): a = 0, c = 0, s2 = 0
 #   je Byte b: a = a + b + c (c = Uebertrag), s1 = a; a = a + s2 + c, s2 = a; a = s1
 #   Ergebnis s1, s2 (Uebertrag laeuft durch, kein CLC im Durchlauf)
@@ -66,9 +72,23 @@ def build(org=0x2000, par=0x2340):
                                                          P + 49, P + 50, P + 51, P + 52, P + 53, P + 54)
     ORDER = P + 0x37                      # Sektorreihenfolge (29)
     SUM, RESULT = P + 0x54, P + 0x8E      # 2*29, 29 -> bis P+0xAA
+    FIRST, LAST, ZT = P + 0xAB, P + 0xAC, P + 0xAD   # ZT: 16 Bytes -> bis P+0xBC
     A = Asm(org)
     A.j(0x4C, 'rentry')
     A.j(0x4C, 'wentry')
+    A.b(0xA2, 0, 0x2C)                    # AREAD: X = 0, BIT abs ueberspringt
+    A.b(0xA2, 3)                          # AWRITE: X = 3 (Abstand rentry -> wentry im JMP-Tisch)
+
+    # ---------------- ganze Diskette (Sektorliste P+$37 = 0,1,2,.. vom Controller)
+    A.a(0xBD, org + 1); A.j(0x8D, 'acall'); A.a(0xBD, org + 2); A.j(0x8D, 'acall2')
+    A.a(0xAD, FIRST); A.a(0x8D, T)
+    A.L('at'); A.b(0xA2, 0); A.a(0xAD, T)
+    A.L('az'); A.a(0xDD, ZT); A.r(0x90, 'afound')    # ZT: letzte Spur der Zone + 1
+    A.b(0xE8, 0xE8); A.r(0xD0, 'az')
+    A.L('afound'); A.a(0xBD, ZT + 1); A.a(0x8D, N)
+    A.b(0x20); A.L('acall'); A.b(0); A.L('acall2'); A.b(0)
+    A.a(0xEE, T); A.a(0xAD, T); A.a(0xCD, LAST); A.r(0xD0, 'at')   # LAST: letzte Spur + 1
+    A.b(0x60)
 
     # ---------------- gemeinsame Unterprogramme
     A.L('init')
@@ -234,6 +254,7 @@ def build(org=0x2000, par=0x2340):
 
     code = A.done()
     assert org + len(code) <= par, len(code)
+    assert par + 0xBD <= 0x2400, hex(par)     # $2400 spiegelt $2000
     return code, A.lab
 
 def fletcher(data):
@@ -254,6 +275,8 @@ def src_header(code, org, par):
            '#define XIMG_DRV_PAR    0x%04x' % par,
            '#define XIMG_DRV_READ   0x%04x' % org,
            '#define XIMG_DRV_WRITE  0x%04x' % (org + 3),
+           '#define XIMG_DRV_AREAD  0x%04x' % (org + 6),
+           '#define XIMG_DRV_AWRITE 0x%04x' % (org + 9),
            '/* parameter offsets */',
            '#define XIMG_P_T     0',
            '#define XIMG_P_N     1',
@@ -263,6 +286,9 @@ def src_header(code, org, par):
            '#define XIMG_P_BUFH  14',
            '#define XIMG_P_IDJ   24',
            '#define XIMG_P_ORDER 0x37',
+           '#define XIMG_P_FIRST 0xab',
+           '#define XIMG_P_END   0xac   /* last track + 1 */',
+           '#define XIMG_P_ZT    0xad',
            'static const uint8_t ximg_drv_code[%d] XIMG_PROGMEM = {' % len(code)]
     for i in range(0, len(code), 12):
         out.append('    ' + ', '.join('0x%02x' % v for v in code[i:i + 12]) + ',')
@@ -270,7 +296,7 @@ def src_header(code, org, par):
     return '\n'.join(out) + '\n'
 
 if __name__ == '__main__':
-    ORG, PAR = 0x2000, 0x2340
+    ORG, PAR = 0x2000, 0x2343
     code, lab = build(ORG, PAR)
     if len(sys.argv) > 1 and sys.argv[1] == '--src':
         sys.stdout.write(src_header(code, ORG, PAR))

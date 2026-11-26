@@ -20,7 +20,9 @@ static FIL      fh;
 static bool     fh_open;
 static uint8_t  mode;                   /* 'B' backup, 'R' restore */
 static uint8_t  type;                   /* XIMG_D64/80/82 */
-static uint8_t  track;                  /* armed track */
+static uint8_t  track;                  /* current track of the data phase */
+static uint8_t  first, last;            /* armed track range */
+static uint8_t  tbad[154];              /* per track: bad blocks, 0xff = failed */
 static uint32_t etab;                   /* backup D64: error table offset, 0 = none */
 static buffer_t *blk;
 
@@ -105,6 +107,12 @@ static void open_image(uint8_t *p, uint8_t m)
   mode = m;
   type = t;
   etab = 0;
+  memset(tbad, 0, sizeof(tbad));
+}
+
+static uint8_t tracks(void)
+{
+  return type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 : 154;
 }
 
 void ximg_command(void)
@@ -122,23 +130,49 @@ void ximg_command(void)
     open_image(p + 2, *p);
     break;
 
-  case 'T':
-    p += 2;
-    if (!fh_open) {
-      set_error(ERROR_FILE_NOT_OPEN);
-      return;
-    }
+  case 'T':                             /* T,<unit>,<track> */
+  case 'A':                             /* A,<unit>[,<first>[,<last>]] */
     {
-      uint8_t dev = parse_num(&p);
-      uint8_t t = parse_num(&p);
-      uint8_t tracks = type == XIMG_D64 ? 35 : type == XIMG_D80 ? 77 : 154;
-      if (dev < 4 || dev > 30 || t < 1 || t > tracks) {
+      uint8_t c = *p, dev, f, l;
+      p += 2;
+      if (!fh_open) {
+        set_error(ERROR_FILE_NOT_OPEN);
+        return;
+      }
+      dev = parse_num(&p);
+      f = parse_num(&p);
+      l = parse_num(&p);
+      if (c == 'T')
+        l = f;
+      if (!f)
+        f = 1;
+      if (!l)
+        l = tracks();
+      if (dev < 4 || dev > 30 || f > l || l > tracks()) {
         set_error(ERROR_SYNTAX_UNKNOWN);
         return;
       }
-      track = t;
+      first = f;
+      last = l;
       ximg_go = false;
       ximg_armed_dev = dev;
+    }
+    break;
+
+  case 'L':                             /* L[,<from>]: next track with errors */
+    {
+      uint8_t t;
+      p += 2;
+      t = parse_num(&p);
+      if (!t)
+        t = 1;
+      for (; t <= tracks(); t++)
+        if (tbad[t - 1])
+          break;
+      if (t > tracks())
+        set_error_ts(ERROR_OK, 0, 0);
+      else
+        set_error_ts(ERROR_OK, t, tbad[t - 1]);
     }
     break;
 
@@ -157,6 +191,26 @@ void ximg_command(void)
 uint8_t ximg_dir(void)
 {
   return mode == 'B' ? 'R' : 'W';
+}
+
+uint8_t ximg_first(void)
+{
+  return first;
+}
+
+uint8_t ximg_last(void)
+{
+  return last;
+}
+
+void ximg_set_track(uint8_t t)
+{
+  track = t;
+}
+
+void ximg_track_done(bool ok, uint8_t bad)
+{
+  tbad[track - 1] = ok ? bad : 0xff;
 }
 
 uint8_t ximg_nsec(void)
@@ -215,11 +269,13 @@ bool ximg_get_block(uint8_t sector, uint8_t sum[2])
   return true;
 }
 
-void ximg_finish(bool ok, uint8_t bad)
+void ximg_finish(bool ok, uint16_t bad)
 {
+  if (bad > 255)
+    bad = 255;
   ximg_armed_dev = 0;
   ximg_go = false;
   if (fh_open && mode == 'B')
     f_sync(&fh);
-  set_error_ts(ok ? ERROR_OK : ERROR_DRIVE_NOT_READY, track, bad);
+  set_error_ts(ok ? ERROR_OK : ERROR_DRIVE_NOT_READY, track, (uint8_t)bad);
 }
