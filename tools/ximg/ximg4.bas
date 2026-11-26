@@ -1,4 +1,5 @@
 10 rem disk-imager v4: pet directs, petsd does the data phase, whole disk in one pass
+15 ld=peek(212):rem device the program was loaded from
 20 fori=0to7:readx:poke634+i,x:next:data173,16,232,41,64,208,249,96
 21 rem 826: copy file #3 (ximgdrv.prg, after load address) via m-w to floppy $2000
 22 fori=0to143:readx:poke826+i,x:next
@@ -24,7 +25,9 @@
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
 205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
-210 print#14,"x-img:b,"ty","n$:gosub850:d$="x-img:b":gosub770:ife then900
+210 print#14,"x-img:b,"ty","n$:input#14,e,e$,et,es:ife=63thenprint"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"file exists, replace (y/n)";a$:ifa$="y"thenprint#14,"x-img:b,"ty",@"n$:input#14,e,e$,et,es
+211 m$="":gosub760:ifethenprint"petsd:"e;e$;et;es
+212 d$="x-img:b":gosub770:ife then900
 220 gosub600:gosub400:gosub450:print#14,"x-img:e":gosub850
 230 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
@@ -65,8 +68,11 @@
 530 print#15,"u1:2 0 18 0":gosub800:ifethenreturn
 540 print#15,"b-p:2,2":get#2,a$:ifa$=chr$(65)thendt=64
 550 return
-600 open3,su,3,"ximgdrv.prg,p,r":get#3,a$,a$:sys826
-640 close3:d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(0)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
+600 dd=su:gosub790:ife=62andld>7andld<>suandld<>futhendd=ld:gosub790
+605 ifethenprint"ximgdrv.prg: "e;e$:goto900
+607 get#3,a$,a$:sys826:close3:n=peek(1010)+256*peek(1011)-8192
+610 ifn<800thenprint"ximgdrv.prg too short:"n"bytes":goto900
+640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(0)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
 670 o$="":fori=0to28:o$=o$+chr$(i):next:print#15,"m-w"chr$(122)chr$(35)chr$(29)o$
@@ -91,10 +97,15 @@
 771 return
 780 v=int((ti-t0)/nt*10):poke1015,vand255:poke1016,int(v/256):poke1013,kk:poke1018,fu
 781 poke1017,(kk+fu+peek(1015)+peek(1016))and255:return
+790 open3,dd,3,"ximgdrv.prg,p,r":ifdd=suthenf=14
+791 ifdd<>suthenf=13:ifc13=0thenc13=1:open13,dd,15
+792 input#f,e,e$:ifethenclose3
+793 return
 800 input#15,e,e$,et,es:ife=73thene=0
 810 return
 850 input#14,e,e$,et,es:ifethenprint"petsd:"e;e$;et;es
 860 return
-900 close2:close14:close15:end
+900 close2:close14:close15:ifc13thenclose13
+901 end
 950 print"formatting":print#15,"n0:imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
 960 close2:open2,fu,2,"#0":gosub500:return

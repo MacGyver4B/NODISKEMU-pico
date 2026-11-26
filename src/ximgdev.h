@@ -8,8 +8,9 @@
  * device (on the petSD+ DC of the 75161 is tied, it cannot drive ATN).
  *
  * Commands on the command channel of petSD:
- *   X-IMG:B,<type>,<name>   backup: create image <name> (type 64/80/82)
- *   X-IMG:R,<type>,<name>   restore: open image <name>
+ *   X-IMG:B,<type>,<name>   backup: create image <name> (type 64/80/82),
+ *                           @<name> replaces an existing one
+ *   X-IMG:R,<type>,<name>   restore: open image <name> (type 0: by size)
  *   X-IMG:T,<unit>,<track>  arm: the next M-E to <unit> starts the data
  *                           phase for <track> (after its UNLISTEN)
  *   X-IMG:A,<unit>[,<first>[,<last>]]

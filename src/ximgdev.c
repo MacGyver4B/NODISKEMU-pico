@@ -64,6 +64,7 @@ static uint16_t blocks(void)
 static void open_image(uint8_t *p, uint8_t m)
 {
   FRESULT res;
+  bool replace = false;
   uint8_t t = parse_num(&p);
 
   close_image();
@@ -84,11 +85,26 @@ static void open_image(uint8_t *p, uint8_t m)
     set_error(ERROR_NO_CHANNEL);
     return;
   }
+  /* @name or @:name: replace. FA_CREATE_ALWAYS frees the old clusters and
+     points FatFs to that hole, so the new allocation finds them at once. */
+  if (m == 'B' && *p == '@') {
+    replace = true;
+    p++;
+    if (*p == ':')
+      p++;
+  }
+  if (!*p) {
+    free_buffer(blk);
+    blk = NULL;
+    set_error(ERROR_SYNTAX_NONAME);
+    return;
+  }
   ustrcpy(ops_scratch, p);
   pet2asc(ops_scratch);
   partition[current_part].fatfs->curr_dir = partition[current_part].current_dir.fat;
   res = f_open(partition[current_part].fatfs, &fh, ops_scratch,
-               m == 'B' ? (FA_WRITE | FA_READ | FA_CREATE_NEW) : (FA_READ | FA_OPEN_EXISTING));
+               m == 'B' ? (FA_WRITE | FA_READ | (replace ? FA_CREATE_ALWAYS : FA_CREATE_NEW))
+                        : (FA_READ | FA_OPEN_EXISTING));
   if (res != FR_OK) {
     free_buffer(blk);
     blk = NULL;
