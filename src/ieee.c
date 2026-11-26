@@ -1064,6 +1064,19 @@ void handle_ieee488(void) {
         relay_prefetch(nx & 0x0f);
     }
 #endif
+    // Another device was talking and DAV is already low while we still
+    // hold NRFD: not the controller (it waits for NRFD high), but that
+    // talker, which saw NRFD high just before the ATN edge (2031 during
+    // the byte-wise UNTALK of BASIC 4 DIRECTORY). Its byte is no command;
+    // wait until it releases DAV.
+    while (sniff_dev && sniff_talk && !ieee488_DAV()) {
+      if (ieee488_ATN() || ieee488_CheckIFC()) {
+        if (!ieee488_ListenActive && (ieee488_TalkingDevice == 0))
+          ieee488_BusIdleUnlessAtn();
+        return;
+      }
+    }
+
     ieee488_SetNRFD(1);                   // Say ready for data
     if (ieee488_TE75160 != TE_LISTEN) ieee488_DataListen();
 
@@ -1081,6 +1094,14 @@ void handle_ieee488(void) {
       }
     }
 
+    // DAV low without ATN: a talker's data byte, not a command (the timer
+    // ISR can delay us until another device starts talking after the ATN
+    // cycle). Leave it alone and release the bus.
+    if (ieee488_ATN()) {
+      if (!ieee488_ListenActive && (ieee488_TalkingDevice == 0))
+        ieee488_BusIdleUnlessAtn();
+      return;
+    }
 
     ieee488_SetNRFD(0);                   // Say not ready for data
     cmd = ieee488_Data();
