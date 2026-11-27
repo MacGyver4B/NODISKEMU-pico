@@ -11,6 +11,7 @@
 29 data3,76,148,2,173,240,3,240,3,32,58,3,96,185,0,0,96,201,65,144,3,233,55,96,41,15,96
 30 print"{clr}disk-imager v4":input"(b)ackup/(r)estore";m$
 40 print"floppy unit (unit:drive)? ";:gosub790:fu$=l$:input"petsd unit";su:input"image";n$
+41 fm=0:ifm$="r"thenprint"format disk first (y/n)? ";:gosub790:fm=(l$="y"):rem asked before the clock starts
 42 fu=val(fu$):dn=0:fori=1tolen(fu$):c$=mid$(fu$,i,1):ifc$=":"orc$="."thendn=val(mid$(fu$,i+1))
 43 next:u$=mid$(str$(dn),2)
 45 ti$="000000":db=1:hz=50:dr=0:dp=1:iv=1:rem db=0: no step output, hz: 50/60 hz pet, dp=0: legacy via pet, iv: interleave
@@ -38,7 +39,6 @@
 230 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 305 ty=et
-307 gosub796
 310 gosub500:d$="disk type":gosub770:ifdt<>tyorfmthengosub950
 320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
@@ -114,7 +114,6 @@
 793 ifa$=chr$(20)andlen(l$)>0thenl$=left$(l$,len(l$)-1):printa$;:goto791
 794 ifa$>=" "andlen(l$)<8thenl$=l$+a$:printa$;
 795 goto791
-796 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):return
 800 input#15,e,e$,et,es:ife=73thene=0
 810 return
 850 input#14,e,e$,et,es:ifethenprint"petsd:"e;e$;et;es
@@ -177,7 +176,6 @@
 3090 close4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, bad sectors"ec:goto900
 3200 print#14,"x-img:r,0,"n$:gosub850:ifethen900
 3201 x=et:print#14,"x-img:e":gosub850:ifx<>tythenprint"image is not a d"mid$(str$(ty),2):goto900
-3202 gosub796
 3203 print#15,"u1:2 "u$" 18 0":input#15,e,e$:ifeorfmthenprint"formatting":print#15,"n"u$":imager,xi":input#15,e,e$:ifethenprint"format:"e;e$:goto900
 3204 open4,su,4,n$+",p,r":input#14,e,e$:ifethenprint"petsd:"e;e$:goto900
 3205 close2:open2,fu,2,"#":iflg=2thengosub3500
