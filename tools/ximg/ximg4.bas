@@ -17,16 +17,16 @@
 44 dimtb(255):rem bad sector map buffer (d9060/d9090)
 45 ti$="000000":db=1:hz=50:dr=0:dp=1:iv=1:rem db=0: no step output, hz: 50/60 hz pet, dp=0: legacy via pet, iv: interleave
 50 open15,fu,15,"i"+u$:open14,su,15:va=59456:d$="open, i0":gosub770
-60 print#15,"m-r"chr$(252)chr$(255)chr$(2):get#15,a$,b$
+60 print#15,"m-r"chr$(252)chr$(255)chr$(2):get#15,a$,b$:rem dos id at $fffc: 43/211 4040, 183/242 8x50
 70 a=asc(a$+chr$(0)):b=asc(b$+chr$(0)):dv=0
 80 ifa=43andb=211thendv=21
 90 ifa=183andb=242thendv=27
 95 ifa=197thenlg=1:dv=26:rem 2031: legacy d64
 96 ifa=142thenlg=2:dv=10:print#15,"i"+u$:rem 2040 dos 1: legacy d67
-97 ifa=20andb=242thendv=30:print#15,"m-r"chr$(157)chr$(16)chr$(1):get#15,a$:h3=asc(a$+chr$(0)):d3=-60*(h3=4)-90*(h3=6):ifd3=0thendv=0
+97 ifa=20andb=242thendv=30:print#15,"m-r"chr$(157)chr$(16)chr$(1):get#15,a$:h3=asc(a$+chr$(0)):d3=-60*(h3=4)-90*(h3=6):ifd3=0thendv=0:rem dos 3.0: heads $109d
 100 ifdv=0thenprint"drive not supported":goto900
 105 d$="dos detect":gosub770
-110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
+110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9:rem m-e entry 6 read, 9 write
 115 d$="open #0":gosub770
 117 iflgthen3000
 120 ifm$="r"then300
@@ -64,7 +64,7 @@
 415 tp=19:ifty=80thentp=24
 416 tp=tp-5*(ty=82):ifty=60orty=90thentp=ty*1.1
 417 ifm$="r"thentp=tp*(1.4-.5*(dv=30)):rem restore: floppy 1.4, hard disk 1.9 x backup
-418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10
+418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10:rem learned time/track
 420 tq=ti:ft=1:lt=nt:rt=0
 430 gosub700:ife=0andrt=0andft=1andlt=ntthengosub780
 431 ife=0thenreturn
@@ -85,7 +85,7 @@
 490 ft=t:lt=t:gosub430
 495 f=t+1:iff<=ntthen485
 499 goto450
-500 dt=0:ifdv=30thendt=d3:print#15,"u1:2 "u$" 1 0":goto800
+500 dt=0:ifdv=30thendt=d3:print#15,"u1:2 "u$" 1 0":goto800:rem type from header
 501 print#15,"u1:2 "u$" 39 0":gosub800:ifethen530
 510 print#15,"b-p:2,2":get#2,a$:ifa$<>chr$(67)then530
 520 print#15,"u1:2 "u$" 38 3":gosub800:print#15,"b-p:2,5":get#2,a$:dt=82:ifasc(a$+chr$(0))=78thendt=80
@@ -95,10 +95,10 @@
 550 return
 600 poke1010,0:poke1011,32:sys642
 610 n=peek(1010)+256*peek(1011)-8192:ifn<800thenprint"drive code upload:"n"bytes":goto900
-640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(dn)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
+640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(dn)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11):rem slots, jobs, buffers
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
-680 z$=chr$(40)+chr$(29)+chr$(54)+chr$(27)+chr$(65)+chr$(25)+chr$(78)+chr$(23)+chr$(117)+chr$(29)+chr$(131)+chr$(27)+chr$(142)+chr$(25)+chr$(155)+chr$(23)
+680 z$=chr$(40)+chr$(29)+chr$(54)+chr$(27)+chr$(65)+chr$(25)+chr$(78)+chr$(23)+chr$(117)+chr$(29)+chr$(131)+chr$(27)+chr$(142)+chr$(25)+chr$(155)+chr$(23):rem last track+1, sectors
 685 ifty=64thenz$=chr$(18)+chr$(21)+chr$(25)+chr$(19)+chr$(31)+chr$(18)+chr$(36)+chr$(17)+mid$(z$,9)
 686 ifty=60orty=90thenz$=chr$(153)+chr$(ty*32/15)+mid$(z$,3)
 690 print#15,"m-w"chr$(240)chr$(35)chr$(16)z$:d$="parameters":gosub770:return
@@ -108,13 +108,13 @@
 697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201,255,173,226,3
 698 data141,227,3,172,227,3,185,58,3,32,210,255,238,227,3,173,227,3,205,225,3,208,236,76,162,2,169,0,133,160,133,150,173,229,3,133,212,173,228,3,32,215,240,173,230,3,133,165,32,9,241,173,232,3,133,212,173,231,3,32,215,240,173,233,3,32,147
 699 data241,173,234,3,141,235,3,173,64,232,9,2,141,64,232,44,64,232,16,8,165,155,201,239,208,245,240,29,173,64,232,41,253,141,64,232,169,60,141,33,232,44,64,232,16,251,169,52,141,33,232,206,235,3,208,207,44,230,150,32,174,241,76,185,241
-700 o3=-(ty=60orty=90):print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900
+700 o3=-(ty=60orty=90):print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900:rem cylinders from 0
 710 print#15,"m-w"chr$(238)chr$(35)chr$(2)chr$(ft-o3)chr$(lt+1-o3):d$="x-img:a, range":gosub770
 720 print"{home}{down}{down}{down}{down}{down}{down}track"str$(ft)" to"str$(lt)"      "
 730 print#15,"m-e"chr$(ad)chr$(32):t0=ti:tl=ti:v=0:x=0:q=-1
-732 if(peek(59408)and64)=0then740
+732 if(peek(59408)and64)=0then740:rem atn by the petsd: end
 734 w=peek(59456)and192:ifw<>vthenv=w:tl=ti
-735 ifti-tl>600thenx=1:m$="no response, aborting":gosub760:pokeva,peek(va)and251:fori=1to20:next:pokeva,peek(va)or4:goto740
+735 ifti-tl>600thenx=1:m$="no response, aborting":gosub760:pokeva,peek(va)and251:fori=1to20:next:pokeva,peek(va)or4:goto740:rem quiet 12 s: atn stops drive code
 736 y=ft+int((tl-t0)/tp):ify>lttheny=lt
 737 ify<>qthenq=y:print"{home}{down}{down}{down}{down}{down}{down}{down}track ca."str$(y)"   "
 738 goto732
@@ -193,14 +193,14 @@
 3042 c=1:ife>=20ande<=29thenc=e-18
 3044 ife>0andc=1thenc=4
 3046 er%(b0+s)=c:k=k+1:ifc>1thenec=ec+1
-3047 ifiv>1thenb=b0+s:print#14,"p"chr$(4)chr$(0)chr$(band255)chr$(b/256)chr$(0)
+3047 ifiv>1thenb=b0+s:print#14,"p"chr$(4)chr$(0)chr$(band255)chr$(b/256)chr$(0):rem seek in image
 3048 ifethenpoke992,0:poke994,0:poke993,128:sys634:poke992,4:sys637:sys637:goto3060
-3049 ifdpandlg=1thenprint#15,"b-p:2,0":poke1002,0:sys826:on-(st<>0)goto3990:goto3060
+3049 ifdpandlg=1thenprint#15,"b-p:2,0":poke1002,0:sys826:on-(st<>0)goto3990:goto3060:rem drive -> petsd direct
 3050 iflg=1thenprint#15,"b-p:2,0":poke994,0:poke993,128:poke992,2:sys634:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637:goto3060
 3051 ifdpthenprint#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:print#4,chr$(asc(a$+chr$(0)));:print#15,"b-p:2,1":poke1002,255:sys826:on-(st<>0)goto3990:goto3060
 3052 print#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:poke826,asc(a$+chr$(0))
 3054 print#15,"b-p:2,1":poke994,1:poke993,128:poke992,2:sys634:poke994,0:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637
-3060 u%(s)=1:s=s+iv:ifs>=nthens=s-n
+3060 u%(s)=1:s=s+iv:ifs>=nthens=s-n:rem interleave
 3061 ifi<n-1thenifu%(s)thens=s+1:ifs>=nthens=0
 3062 ifi<n-1thenifu%(s)then3061
 3063 nexti:nextt:ifec=0then3090
@@ -228,7 +228,7 @@
 3402 ift>24thenn=18
 3404 ift>30thenn=17
 3406 return
-3500 print#15,"b-p:2,1":print#2,chr$(170)chr$(85)chr$(170)chr$(85);:pg=0
+3500 print#15,"b-p:2,1":print#2,chr$(170)chr$(85)chr$(170)chr$(85);:pg=0:rem find buffer of #
 3502 forp=16to79:print#15,"m-r"chr$(1)chr$(p)chr$(1):get#15,a$:ifasc(a$+chr$(0))<>170then3506
 3504 print#15,"m-r"chr$(2)chr$(p)chr$(1):get#15,a$:ifasc(a$+chr$(0))=85thenpg=p:p=79
 3506 nextp:ifpg=0thenprint"drive buffer not found":goto900
