@@ -11,7 +11,7 @@
 29 data3,76,148,2,173,240,3,240,3,32,58,3,96,185,0,0,96,201,65,144,3,233,55,96,41,15,96
 30 print"{clr}disk-imager v4":input"(b)ackup/(r)estore";m$
 40 print"floppy unit (unit:drive)? ";:gosub790:fu$=l$:input"petsd unit";su:input"image";n$
-41 fm=0:ifm$="r"thenprint"format disk first (y/n)? ";:gosub790:fm=(l$="y"):rem asked before the clock starts
+41 fm=0:rem format question after the drive detection (not for hard disks)
 42 fu=val(fu$):dn=0:fori=1tolen(fu$):c$=mid$(fu$,i,1):ifc$=":"orc$="."thendn=val(mid$(fu$,i+1))
 43 next:u$=mid$(str$(dn),2)
 44 dimtb(255):rem bad sector map buffer (d9060/d9090)
@@ -24,6 +24,7 @@
 95 ifa=197thenlg=1:dv=26:rem 2031: legacy d64
 96 ifa=142thenlg=2:dv=10:print#15,"i"+u$:rem 2040 dos 1: legacy d67
 97 ifa=20andb=242thendv=30:print#15,"m-r"chr$(157)chr$(16)chr$(1):get#15,a$:h3=asc(a$+chr$(0)):d3=-60*(h3=4)-90*(h3=6):ifd3=0thendv=0
+98 ifm$="r"anddvanddv<>30thenw=ti:print"{home}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):gosub785
 100 ifdv=0thenprint"drive not supported":goto900
 105 d$="dos detect":gosub770
 110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
@@ -49,12 +50,12 @@
 320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 340 m$="image is d"+mid$(str$(ty),2)+", drive is d"+mid$(str$(d3),2):ifty<>d3then314
-342 print#14,"x-img:e":gosub850:print"checking bad sector map":gosub1200:m$="bad sector map differs from target disk"
+342 print#14,"x-img:e":gosub850:print"{home}{down}{down}{down}{down}{down}checking bad sector map":gosub1200:m$="bad sector map differs from target disk"
 343 ifbs=2thenm$="cannot open image"
 344 ifbs=3thenm$="cannot read bad sector map:"+str$(e)
-345 ifbsthenprint:printm$:goto900
-346 print"all data on the hard disk will be lost!":iffmthenprint"(hard disk is not formatted)"
-347 w=ti:print"type yes to continue: ";:gosub790:gosub785:ifl$<>"yes"thenprint"aborted":goto900
+345 ifbsthenprint"{home}{down}{down}{down}{down}{down}"m$:goto900
+346 print"{home}{down}{down}{down}{down}{down}";
+347 w=ti:print"all data will be lost! type yes: ";:gosub790:gosub785:ifl$<>"yes"thenprint"aborted":goto900
 348 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 349 goto320
 400 nt=35:ifty=80thennt=77

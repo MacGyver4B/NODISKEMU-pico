@@ -32,6 +32,17 @@ Backup landen die Job-Ergebnisse in der Fehlertabelle des D64.
 Bricht der Durchgang ab (Zeitüberschreitung), hängt der Laufwerkscode:
 Floppy aus- und einschalten, das Programm macht ab der Abbruchspur weiter.
 
+Festplatten D9060/D9090 (DOS 3.0): Backup als D60/D90. Ein Restore
+geht nur, wenn die Geometrie (D60 auf D9060, D90 auf D9090) und die
+Bad-Sector-Map (BSM, bei Commodore intern "BTS", auf Zylinder 0) von
+Image und Zielplatte übereinstimmen; danach muss `yes` eingegeben werden.
+Formatiert wird eine Festplatte nicht, die Format-Frage entfällt.
+VICE: nach dem Wechsel eines D60/D90-Images das Laufwerk resetten, die
+DOS liest die Kopfzahl nur beim Reset (sonst "drive not supported").
+
+Wartezeiten auf Eingaben (Format, Überschreiben, `yes`) zählen nicht zur
+gemessenen Zeit: die Uhr wird danach per POKE ($8D-$8F) zurückgesetzt.
+
 Zeiten (VICE, true drive, petSD+ simuliert):
 
 | | Backup | Restore |
