@@ -11,7 +11,7 @@
 29 data3,76,148,2,173,240,3,240,3,32,58,3,96,185,0,0,96,201,65,144,3,233,55,96,41,15,96
 30 print"{clr}disk-imager v4":input"(b)ackup/(r)estore";m$
 40 print"floppy unit (unit:drive)? ";:gosub790:fu$=l$:input"petsd unit";su:input"image";n$
-41 fm=0:rem format question after the drive detection (not for hard disks)
+41 fm=0:rem the format question comes after the checks (not for hard disks)
 42 fu=val(fu$):dn=0:fori=1tolen(fu$):c$=mid$(fu$,i,1):ifc$=":"orc$="."thendn=val(mid$(fu$,i+1))
 43 next:u$=mid$(str$(dn),2)
 44 dimtb(255):rem bad sector map buffer (d9060/d9090)
@@ -24,7 +24,6 @@
 95 ifa=197thenlg=1:dv=26:rem 2031: legacy d64
 96 ifa=142thenlg=2:dv=10:print#15,"i"+u$:rem 2040 dos 1: legacy d67
 97 ifa=20andb=242thendv=30:print#15,"m-r"chr$(157)chr$(16)chr$(1):get#15,a$:h3=asc(a$+chr$(0)):d3=-60*(h3=4)-90*(h3=6):ifd3=0thendv=0
-98 ifm$="r"anddvanddv<>30thenw=ti:print"{home}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):gosub785
 100 ifdv=0thenprint"drive not supported":goto900
 105 d$="dos detect":gosub770
 110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
@@ -43,14 +42,15 @@
 306 sd=0:ifdv=27thenprint#15,"m-r"chr$(172)chr$(16)chr$(1):get#15,a$:sd=asc(a$+chr$(0)):rem sides of the drive
 307 ifdv=30then340
 308 ifsd=1andty=82thenm$="8050 is single sided, image is d82":goto314
-310 gosub500:d$="disk type":gosub770:m$="8250/sfd cannot format d80, insert a formatted 8050 disk":ifsd=2andty=80and(dt<>80orfm)then314
-311 ifdt<>tyorfmthengosub950
-312 goto320
+310 gosub500:d$="disk type":gosub770:m$="8250/sfd cannot format d80, insert a formatted 8050 disk":ifsd=2andty=80anddt<>80then314
+311 ifnot(sd=2andty=80)thenw=ti:print"{home}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):gosub785
+312 ifdt<>tyorfmthengosub950
+313 goto320
 314 print:printm$:print#14,"x-img:e":gosub850:goto900
 320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 340 m$="image is d"+mid$(str$(ty),2)+", drive is d"+mid$(str$(d3),2):ifty<>d3then314
-342 print#14,"x-img:e":gosub850:print"{home}{down}{down}{down}{down}{down}checking bad sector map":gosub1200:m$="bad sector map differs from target disk"
+342 print#14,"x-img:e":gosub850:print"{home}{down}{down}{down}{down}{down}checking bad sector map":gosub1200:d$="bsm check":gosub770:m$="bad sector map differs from target disk"
 343 ifbs=2thenm$="cannot open image"
 344 ifbs=3thenm$="cannot read bad sector map:"+str$(e)
 345 ifbsthenprint"{home}{down}{down}{down}{down}{down}"m$:goto900
@@ -63,7 +63,7 @@
 413 ifty=60orty=90thennt=153
 415 tp=19:ifty=80thentp=24
 416 tp=tp-5*(ty=82):ifty=60orty=90thentp=ty*1.1
-417 ifm$="r"thentp=tp*1.4
+417 ifm$="r"thentp=tp*(1.4-.5*(dv=30)):rem restore: floppy 1.4, hard disk 1.9 x backup
 418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10
 420 tq=ti:ft=1:lt=nt:rt=0
 430 gosub700:ife=0andrt=0andft=1andlt=ntthengosub780
@@ -71,15 +71,15 @@
 432 rt=rt+1:ifet<>ftthenrt=1
 434 ft=et:m$="aborted at track"+str$(et)+", retrying":gosub760
 436 ifrt<=3then445
-438 m$="power-cycle the floppy, then press a key":gosub760
+438 w=ti:m$="power-cycle the floppy, then press a key":gosub760
 440 geta$:ifa$=""then440
-442 rt=0
+442 rt=0:gosub785
 445 close2:close15:open15,fu,15,"i"+u$:open2,fu,2,"#0":gosub500:gosub600:goto430
 450 bt=0:nb=0:f=1
 455 print#14,"x-img:l,"f:input#14,e,e$,t,es:ift=0then470
 460 nb=nb+1:bt=bt+es:f=t+1:iff<=ntthen455
 470 ifnb=0thenreturn
-475 printnb"track(s) with errors":input"retry these tracks (y/n)";a$:ifa$<>"y"thenreturn
+475 printnb"track(s) with errors":w=ti:print"retry these tracks (y/n)? ";:gosub790:gosub785:ifl$<>"y"thenreturn
 480 f=1
 485 print#14,"x-img:l,"f:input#14,e,e$,t,es:ift=0then450
 490 ft=t:lt=t:gosub430
@@ -139,22 +139,21 @@
 950 print"formatting":print#15,"n"u$":imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
 960 close2:open2,fu,2,"#0":gosub500:return
 1200 bs=0:open3,su,3,n$+",p,r":gosub850:ifethenbs=2:return
-1202 ip=0:c=0:s=0:gosub1230:ifbsthen1220
-1204 fork=0to1:p=k:gosub1250:ifb<>tb(k)thenbs=1
-1206 next:ifbsthen1220
-1208 c=tb(0):s=tb(1):rem start of the bad sector map (cylinder 0)
-1210 gosub1230:ifbsthen1220
-1212 fork=0to255:p=s*256+k:gosub1250:ifb<>tb(k)thenbs=1:k=255
-1214 next:ifbsthen1220
-1216 e1=0:fork=2to254:iftb(k)=255andtb(k+1)=255thene1=1:k=254
-1218 next:ife1=0thenc=tb(0):s=tb(1):ifc=0then1210
-1219 ife1=0thenbs=1
+1202 c=0:s=0:gosub1230:ifbsthen1220
+1204 gosub1240:x0=b:gosub1240:c=x0:s=b:ifbsthen1220:rem 0/0 bytes 0-1: start of the bad sector map
+1206 gosub1230:ifbsthen1220
+1208 gosub1240:x0=b:gosub1240:x1=b:f=0:k=2:ifbsthen1220:rem link to the next sector of the map
+1210 gosub1240:ifbsthen1220
+1212 ifb=255andfthen1220:rem ff ff: end of the list
+1214 f=(b=255):k=k+1:ifk<256then1210
+1216 c=x0:s=x1:ifc=0then1206:rem the map goes on (always on cylinder 0)
+1218 bs=1
 1220 close3:return
 1230 print#15,"u1:2 "u$;c;s:gosub800:ifethenbs=3:return
-1232 fork=0to255:get#2,a$:tb(k)=asc(a$+chr$(0)):next:return
-1250 ifp<ipthenclose3:open3,su,3,n$+",p,r":ip=0
-1252 ifip<pthenget#3,a$:ip=ip+1:goto1252
-1254 get#3,a$:ip=ip+1:b=asc(a$+chr$(0)):return
+1232 p=c*h3*32+s:print#14,"p"chr$(99)chr$(0)chr$(pand255)chr$(p/256)chr$(0):gosub850:ifethenbs=2
+1234 return
+1240 get#2,a$:get#3,c$:b=asc(a$+chr$(0)):ifasc(c$+chr$(0))<>bthenbs=1
+1242 return
 2000 data#4ce6214c4a22a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
 2001 data#4323ddf0239004e8e8d0f7bdf1238d4423200000ee4323ad4323cdef23d0de60
 2002 data#58ad8002091c29fd8d8002850329ef8502a50329fb8504ad5b230a0a0aaabd21
@@ -210,6 +209,7 @@
 3090 close4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, bad sectors"ec:goto900
 3200 print#14,"x-img:r,0,"n$:gosub850:ifethen900
 3201 x=et:print#14,"x-img:e":gosub850:ifx<>tythenprint"image is not a d"mid$(str$(ty),2):goto900
+3202 w=ti:print"{home}{down}{down}{down}{down}{down}format disk first (y/n)? ";:gosub790:fm=(l$="y"):gosub785
 3203 print#15,"u1:2 "u$" 18 0":input#15,e,e$:ifeorfmthenprint"formatting":print#15,"n"u$":imager,xi":input#15,e,e$:ifethenprint"format:"e;e$:goto900
 3204 open4,su,4,n$+",p,r":input#14,e,e$:ifethenprint"petsd:"e;e$:goto900
 3205 close2:open2,fu,2,"#":iflg=2thengosub3500
