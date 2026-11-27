@@ -51,7 +51,7 @@
 410 ifty=82thennt=154
 413 ifty=60orty=90thennt=153
 415 tp=19:ifty=80thentp=24
-416 tp=tp-5*(ty=82):ifty=60orty=90thentp=ty*.83
+416 tp=tp-5*(ty=82):ifty=60orty=90thentp=ty*1.1
 417 ifm$="r"thentp=tp*1.4
 418 kk=ty-100*(m$="r"):ifpeek(1013)=kkandpeek(1018)=fuand((kk+fu+peek(1015)+peek(1016))and255)=peek(1017)thentp=(peek(1015)+256*peek(1016))/10
 420 tq=ti:ft=1:lt=nt:rt=0
