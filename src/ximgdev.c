@@ -19,7 +19,7 @@ bool    ximg_go;
 static FIL      fh;
 static bool     fh_open;
 static uint8_t  mode;                   /* 'B' backup, 'R' restore */
-static uint8_t  type;                   /* XIMG_D64/80/82, D60/D90 backup only */
+static uint8_t  type;                   /* XIMG_D64/80/82/60/90 */
 static uint8_t  track;                  /* current track of the data phase */
 static uint8_t  first, last;            /* armed track range */
 static uint8_t  tbad[154];              /* per track: bad blocks, 0xff = failed */
@@ -81,7 +81,7 @@ static void open_image(uint8_t *p, uint8_t m)
 
   close_image();
   if (t != 0 && t != XIMG_D64 && t != XIMG_D80 && t != XIMG_D82 &&
-      !(m == 'B' && (t == XIMG_D60 || t == XIMG_D90))) {
+      t != XIMG_D60 && t != XIMG_D90) {
     set_error(ERROR_SYNTAX_UNKNOWN);
     return;
   }
@@ -130,7 +130,7 @@ static void open_image(uint8_t *p, uint8_t m)
   if (m == 'R') {
     /* type 0: take it from the size (with or without error table) */
     uint8_t ts = ximg_type_from_size(fh.fsize);
-    if (!ts || (t && ts != t) || ts == XIMG_D60 || ts == XIMG_D90) {
+    if (!ts || (t && ts != t)) {
       f_close(&fh);
       free_buffer(blk + 1);
       free_buffer(blk);

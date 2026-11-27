@@ -73,7 +73,9 @@ def build(org=0x2000, par=0x2340):
     NEXT, SENT, SLOT, RES, ID1, ID2, CMDJ, WSLOT, CNT, RTMP = (P + 45, P + 46, P + 47, P + 48,
                                                          P + 49, P + 50, P + 51, P + 52, P + 53, P + 54)
     # P+$37..$53: frei (frueher Sektorreihenfolge, jetzt immer 0,1,2..)
-    SUM, RESULT = P + 0x54, P + 0x8E      # 2*29, 29 -> bis P+0xAA
+    # Pruefsummen und Ergebnisse je Sektor (bis 192 bei D9090), Index = Sektorbyte:
+    # eigene Seiten in den freien DOS-Puffern 12-14 ($41-$43). $2400 spiegelt $2000!
+    SUML, SUMH, RESULT = 0x4100, 0x4200, 0x4300
     FIRST, LAST, ZT = P + 0xAB, P + 0xAC, P + 0xAD   # ZT: 16 Bytes -> bis P+0xBC
     A = Asm(org)
     A.j(0x4C, 'rentry')
@@ -152,7 +154,7 @@ def build(org=0x2000, par=0x2340):
     A.b(0xC0, 0); A.r(0xD0, 'sl')
     A.b(0x60)
 
-    # rcvblk: 256 Bytes in den gepatchten Puffer, 2 Bytes nach SUM+2*NEXT
+    # rcvblk: 256 Bytes in den gepatchten Puffer, 2 Bytes nach SUML/SUMH[NEXT]
     A.L('rcvblk')
     A.b(0xA0, 0)
     A.L('rl1'); A.a(0x2C, PAD2); A.r(0x70, 'rl1')                 # BVS: DAV noch high
@@ -160,21 +162,21 @@ def build(org=0x2000, par=0x2340):
     A.L('rl2'); A.a(0x2C, PAD2); A.r(0x50, 'rl2')                 # BVC: DAV noch low
     A.a(0xAD, IEEEDI); A.patchable(0x99, 'q2'); A.b(0xA5, PHI); A.a(0x8D, PAD2); A.b(0xC8)
     A.r(0xD0, 'rl1')
-    A.a(0xAD, NEXT); A.b(0x0A, 0xA8)
+    A.a(0xAC, NEXT)
     A.L('rs1'); A.a(0x2C, PAD2); A.r(0x70, 'rs1')
-    A.a(0xAD, IEEEDI); A.a(0x99, SUM); A.b(0xA5, RLO); A.a(0x8D, PAD2)
+    A.a(0xAD, IEEEDI); A.a(0x99, SUML); A.b(0xA5, RLO); A.a(0x8D, PAD2)
     A.L('rs2'); A.a(0x2C, PAD2); A.r(0x50, 'rs2')
-    A.a(0xAD, IEEEDI); A.a(0x99, SUM + 1); A.b(0xA5, PHI); A.a(0x8D, PAD2)
+    A.a(0xAD, IEEEDI); A.a(0x99, SUMH); A.b(0xA5, PHI); A.a(0x8D, PAD2)
     A.b(0x60)
 
-    # csum: Pruefsumme des Puffers von Slot SLOT, Vergleich mit SUM[2*SEC]
+    # csum: Pruefsumme des Puffers von Slot SLOT, Vergleich mit SUML/SUMH[SEC]
     A.L('csum')
     A.b(0xA9, 0, 0x85, S2, 0x18, 0xA0, 0)
     A.L('cl'); A.patchable(0x79, 'c1')                            # ADC buf,Y
     A.b(0x85, S1, 0x65, S2, 0x85, S2, 0xA5, S1, 0xC8); A.r(0xD0, 'cl')
-    A.a(0xAE, SLOT); A.a(0xBD, SEC); A.b(0x0A, 0xA8)
-    A.b(0xA5, S1); A.a(0xD9, SUM); A.r(0xD0, 'cbad')
-    A.b(0xA5, S2); A.a(0xD9, SUM + 1); A.r(0xD0, 'cbad')
+    A.a(0xAE, SLOT); A.a(0xBC, SEC)
+    A.b(0xA5, S1); A.a(0xD9, SUML); A.r(0xD0, 'cbad')
+    A.b(0xA5, S2); A.a(0xD9, SUMH); A.r(0xD0, 'cbad')
     A.b(0x60)
     A.L('cbad'); A.b(0xA9, 7); A.j(0x4C, 'setres')
 
@@ -213,12 +215,12 @@ def build(org=0x2000, par=0x2340):
     # ---------------- WRITE + Pruefen
     A.L('wentry')
     A.j(0x20, 'init'); A.b(0xA9, 0x90); A.a(0x8D, CMDJ)
-    A.a(0xAC, N); A.b(0x88, 0xA9, 1)
-    A.L('wr0'); A.a(0x99, RESULT); A.b(0x88); A.r(0x10, 'wr0')
+    A.a(0xAC, N); A.b(0xA9, 1)                                   # RESULT[0..N-1] = 1
+    A.L('wr0'); A.a(0x99, RESULT - 1); A.b(0x88); A.r(0xD0, 'wr0')   # (N bis 192: kein BPL)
     A.L('wloop')
     A.a(0xAD, NEXT); A.a(0xCD, N); A.r(0xF0, 'wdrain')
     A.a(0xAE, WSLOT)
-    A.a(0xBD, SEC); A.r(0x30, 'wfree')
+    A.a(0xBD, SEC); A.b(0xC9, 0xC0); A.r(0xB0, 'wfree')   # frei = $FF (Sektor bis 191)
     A.L('wwait'); A.a(0xBC, JOBN); A.a(0xB9, JOBS); A.r(0x30, 'wwait')
     A.j(0x20, 'setres'); A.b(0xA9, 0xFF); A.a(0x9D, SEC)
     A.L('wfree')
@@ -228,7 +230,7 @@ def build(org=0x2000, par=0x2340):
     A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'ws1'); A.b(0xA2, 0)
     A.L('ws1'); A.a(0x8E, WSLOT); A.j(0x4C, 'wloop')
     A.L('wdrain'); A.b(0xA2, 0)
-    A.L('wd1'); A.a(0xBD, SEC); A.r(0x30, 'wd3')
+    A.L('wd1'); A.a(0xBD, SEC); A.b(0xC9, 0xC0); A.r(0xB0, 'wd3')
     A.L('wd2'); A.a(0xBC, JOBN); A.a(0xB9, JOBS); A.r(0x30, 'wd2')
     A.j(0x20, 'setres'); A.b(0xA9, 0xFF); A.a(0x9D, SEC)
     A.L('wd3'); A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'wd1')
@@ -238,7 +240,7 @@ def build(org=0x2000, par=0x2340):
     A.L('vi'); A.j(0x20, 'queue'); A.b(0xE8); A.a(0xEC, R); A.r(0xD0, 'vi')
     A.L('vmain'); A.b(0xA2, 0)
     A.L('vscan')
-    A.a(0xBD, SEC); A.r(0x30, 'vnext')
+    A.a(0xBD, SEC); A.b(0xC9, 0xC0); A.r(0xB0, 'vnext')
     A.a(0xBC, JOBN); A.a(0xB9, JOBS); A.r(0x30, 'vnext')
     A.b(0xC9, 2); A.r(0x90, 'vgood')
     A.a(0xBC, TRY); A.r(0xF0, 'vbad')

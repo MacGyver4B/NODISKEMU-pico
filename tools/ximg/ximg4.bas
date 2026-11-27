@@ -14,6 +14,7 @@
 41 fm=0:ifm$="r"thenprint"format disk first (y/n)? ";:gosub790:fm=(l$="y"):rem asked before the clock starts
 42 fu=val(fu$):dn=0:fori=1tolen(fu$):c$=mid$(fu$,i,1):ifc$=":"orc$="."thendn=val(mid$(fu$,i+1))
 43 next:u$=mid$(str$(dn),2)
+44 dimtb(255):rem bad sector map buffer (d9060/d9090)
 45 ti$="000000":db=1:hz=50:dr=0:dp=1:iv=1:rem db=0: no step output, hz: 50/60 hz pet, dp=0: legacy via pet, iv: interleave
 50 open15,fu,15,"i"+u$:open14,su,15:va=59456:d$="open, i0":gosub770
 60 print#15,"m-r"chr$(252)chr$(255)chr$(2):get#15,a$,b$
@@ -28,7 +29,6 @@
 110 open2,fu,2,"#0":ad=6:ifm$="r"thenad=9
 115 d$="open #0":gosub770
 117 iflgthen3000
-118 ifdv=30andm$="r"thenprint"hard disk: backup only":goto900
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
 205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty-30*(ty=60)),2):rem d9060 also .d90
@@ -40,6 +40,7 @@
 300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 305 ty=et
 306 sd=0:ifdv=27thenprint#15,"m-r"chr$(172)chr$(16)chr$(1):get#15,a$:sd=asc(a$+chr$(0)):rem sides of the drive
+307 ifdv=30then340
 308 ifsd=1andty=82thenm$="8050 is single sided, image is d82":goto314
 310 gosub500:d$="disk type":gosub770:m$="8250/sfd cannot format d80, insert a formatted 8050 disk":ifsd=2andty=80and(dt<>80orfm)then314
 311 ifdt<>tyorfmthengosub950
@@ -47,6 +48,15 @@
 314 print:printm$:print#14,"x-img:e":gosub850:goto900
 320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
+340 m$="image is d"+mid$(str$(ty),2)+", drive is d"+mid$(str$(d3),2):ifty<>d3then314
+342 print#14,"x-img:e":gosub850:print"checking bad sector map":gosub1200:m$="bad sector map differs from target disk"
+343 ifbs=2thenm$="cannot open image"
+344 ifbs=3thenm$="cannot read bad sector map:"+str$(e)
+345 ifbsthenprint:printm$:goto900
+346 print"all data on the hard disk will be lost!":iffmthenprint"(hard disk is not formatted)"
+347 print"type yes to continue: ";:gosub790:ifl$<>"yes"thenprint"aborted":goto900
+348 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
+349 goto320
 400 nt=35:ifty=80thennt=77
 410 ifty=82thennt=154
 413 ifty=60orty=90thennt=153
@@ -126,32 +136,49 @@
 900 close2:close14:close15:end
 950 print"formatting":print#15,"n"u$":imager,xi":gosub800:ifethenprint"format:"e;e$:goto900
 960 close2:open2,fu,2,"#0":gosub500:return
-2000 data#4cea214c4e22a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
+1200 bs=0:open3,su,3,n$+",p,r":gosub850:ifethenbs=2:return
+1202 ip=0:c=0:s=0:gosub1230:ifbsthen1220
+1204 fork=0to1:p=k:gosub1250:ifb<>tb(k)thenbs=1
+1206 next:ifbsthen1220
+1208 c=tb(0):s=tb(1):rem start of the bad sector map (cylinder 0)
+1210 gosub1230:ifbsthen1220
+1212 fork=0to255:p=s*256+k:gosub1250:ifb<>tb(k)thenbs=1:k=255
+1214 next:ifbsthen1220
+1216 e1=0:fork=2to254:iftb(k)=255andtb(k+1)=255thene1=1:k=254
+1218 next:ife1=0thenc=tb(0):s=tb(1):ifc=0then1210
+1219 ife1=0thenbs=1
+1220 close3:return
+1230 print#15,"u1:2 "u$;c;s:gosub800:ifethenbs=3:return
+1232 fork=0to255:get#2,a$:tb(k)=asc(a$+chr$(0)):next:return
+1250 ifp<ipthenclose3:open3,su,3,n$+",p,r":ip=0
+1252 ifip<pthenget#3,a$:ip=ip+1:goto1252
+1254 get#3,a$:ip=ip+1:b=asc(a$+chr$(0)):return
+2000 data#4ce6214c4a22a2002ca203bd01208d3220bd02208d3320adee238d4323a200ad
 2001 data#4323ddf0239004e8e8d0f7bdf1238d4423200000ee4323ad4323cdef23d0de60
 2002 data#58ad8002091c29fd8d8002850329ef8502a50329fb8504ad5b230a0a0aaabd21
 2003 data#108d7423bd22108d7523a9008d70238d71238d7723ae4623caa9ff9d5c23ca10
 2004 data#fa60ac7023cc4423b037989d5c23ee7023a9029d6623bd47230a0a0aa8ad7423
 2005 data#992110ad7523992210ad4323992310bd5c23992410bc4723ad45230d76239903
-2006 data#1060bd51238d18218d24218d35218d4c218d5d218d952160c901f0138d7923bc
-2007 data#5c23b9d123c901d006ad792399d1236020c220bd5c23aa8e0202a5028d8002ae
+2006 data#1060bd51238d18218d24218d35218d4c218d5d218d932160c901f0138d7923bc
+2007 data#5c23b90043c901d006ad79239900436020c220bd5c23aa8e0202a5028d8002ae
 2008 data#73232c820230fb8e0202a5038d80022c820210fba000be00008e0202a5028d80
 2009 data#02c8be00002c820230fb8e0202a5038d8002c8be00002c820210fbc000d0da60
 2010 data#a0002c800270fbad0002990000a5048d8002c82c800250fbad0002990000a503
-2011 data#8d8002c8d0dcad70230aa82c800270fbad0002999723a5048d80022c800250fb
-2012 data#ad0002999823a5038d800260a900850618a000790000850565068506a505c8d0
-2013 data#f2ae7223bd5c230aa8a505d99723d008a506d99823d00160a9074cd820a000be
-2014 data#d1238e0202a5028d8002c8bed1232c820230fb8e0202a5038d8002c8bed1232c
-2015 data#820210fbcc7823d0d960204020a9808d7623a200208220e8ec4623d0f7a200bd
-2016 data#5c23c9c0b031bc4723b903103029c902900ebc6623f009de66232096204c3722
-2017 data#8d73238e722320f020ee7123ae7223a9ff9d5c23208220ad7123cd4423f009e8
-2018 data#ec4623d0ba4cfd21a9ff8d020260204020a9908d7623ac442388a90199d12388
-2019 data#10faad7023cd4423f03bae7723bd5c233010bc4723b9031030f820d820a9ff9d
-2020 data#5c2320c220204021ae7723ad70239d5c23ee7023209620e8ec4623d002a2008e
-2021 data#77234c6222a200bd5c233010bc4723b9031030f820d820a9ff9d5c23e8ec4623
-2022 data#d0e5a9808d7623a9008d70238d7123a200208220e8ec4623d0f7a200bd5c2330
-2023 data#37bc4723b90310302fc9029014bc6623f009de66232096204c182320d8204c0d
-2024 data#238e722320c220208c21ae7223ee7123a9ff9d5c23208220ad7123cd4423f009
-2025 data#e8ec4623d0b64cda22ad442318690129fe8d782320bd21a9ff8d020260
+2011 data#8d8002c8d0dcac70232c800270fbad0002990041a5048d80022c800250fbad00
+2012 data#02990042a5038d800260a900850618a000790000850565068506a505c8d0f2ae
+2013 data#7223bc5c23a505d90041d008a506d90042d00160a9074cd820a000be00438e02
+2014 data#02a5028d8002c8be00432c820230fb8e0202a5038d8002c8be00432c820210fb
+2015 data#cc7823d0d960204020a9808d7623a200208220e8ec4623d0f7a200bd5c23c9c0
+2016 data#b031bc4723b903103029c902900ebc6623f009de66232096204c33228d73238e
+2017 data#722320f020ee7123ae7223a9ff9d5c23208220ad7123cd4423f009e8ec4623d0
+2018 data#ba4cf921a9ff8d020260204020a9908d7623ac4423a90199ff4288d0faad7023
+2019 data#cd4423f03dae7723bd5c23c9c0b010bc4723b9031030f820d820a9ff9d5c2320
+2020 data#c220204021ae7723ad70239d5c23ee7023209620e8ec4623d002a2008e77234c
+2021 data#5d22a200bd5c23c9c0b010bc4723b9031030f820d820a9ff9d5c23e8ec4623d0
+2022 data#e3a9808d7623a9008d70238d7123a200208220e8ec4623d0f7a200bd5c23c9c0
+2023 data#b037bc4723b90310302fc9029014bc6623f009de66232096204c192320d8204c
+2024 data#0e238e722320c220208a21ae7223ee7123a9ff9d5c23208220ad7123cd4423f0
+2025 data#09e8ec4623d0b44cd922ad442318690129fe8d782320b921a9ff8d020260
 3000 close2:open2,fu,2,"#":ty=64-3*(lg=2):ns=683-7*(lg=2):nt=35
 3002 restore:fori=1to262:readx:next:fori=0to92:readx:poke634+i,x:next:fori=0to105:readx:poke826+i,x:next
 3004 print"{home}{down}{down}{down}{down}{down}{down}legacy mode (u1/u2), d"mid$(str$(ty),2):ifm$="r"then3200
