@@ -31,7 +31,7 @@
 118 ifdv=30andm$="r"thenprint"hard disk: backup only":goto900
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
-205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
+205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty-30*(ty=60)),2):rem d9060 also .d90
 210 print#14,"x-img:b,"ty","n$:input#14,e,e$,et,es:ife=63thenprint"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"file exists, replace (y/n)";a$:ifa$="y"thenprint#14,"x-img:b,"ty",@"n$:input#14,e,e$,et,es
 211 m$="":gosub760:ifethenprint"petsd:"e;e$;et;es
 212 d$="x-img:b":gosub770:ife then900
