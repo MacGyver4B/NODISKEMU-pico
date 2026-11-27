@@ -154,6 +154,9 @@ uint8_t callback_dummy(buffer_t *buf);
 /* Allocates a buffer for internal use */
 buffer_t *alloc_system_buffer(void);
 
+/* Allocates two system buffers with continuous data (512 bytes) */
+buffer_t *alloc_system_buffer_pair(void);
+
 /* Allocates a buffer - returns pointer to buffer or NULL if failure */
 buffer_t *alloc_buffer(void);
 

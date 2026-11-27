@@ -24,7 +24,8 @@ static uint8_t  track;                  /* current track of the data phase */
 static uint8_t  first, last;            /* armed track range */
 static uint8_t  tbad[154];              /* per track: bad blocks, 0xff = failed */
 static uint32_t etab;                   /* backup D64: error table offset, 0 = none */
-static buffer_t *blk;
+static buffer_t *blk;                   /* two buffers: 512 bytes in one piece */
+static int32_t  pend = -1;              /* block in one half of blk, not yet written */
 
 static uint8_t parse_num(uint8_t **p)
 {
@@ -49,9 +50,12 @@ static void close_image(void)
     fh_open = false;
   }
   if (blk) {
+    free_buffer(blk + 1);
+    free_buffer(blk + 1);
     free_buffer(blk);
     blk = NULL;
   }
+  pend = -1;
   ximg_armed_dev = 0;
   ximg_go = false;
 }
@@ -89,7 +93,7 @@ static void open_image(uint8_t *p, uint8_t m)
     set_error(ERROR_IMAGE_INVALID);     /* only in a FAT directory */
     return;
   }
-  blk = alloc_system_buffer();
+  blk = alloc_system_buffer_pair();
   if (!blk) {
     set_error(ERROR_NO_CHANNEL);
     return;
@@ -103,6 +107,7 @@ static void open_image(uint8_t *p, uint8_t m)
       p++;
   }
   if (!*p) {
+    free_buffer(blk + 1);
     free_buffer(blk);
     blk = NULL;
     set_error(ERROR_SYNTAX_NONAME);
@@ -115,6 +120,7 @@ static void open_image(uint8_t *p, uint8_t m)
                m == 'B' ? (FA_WRITE | FA_READ | (replace ? FA_CREATE_ALWAYS : FA_CREATE_NEW))
                         : (FA_READ | FA_OPEN_EXISTING));
   if (res != FR_OK) {
+    free_buffer(blk + 1);
     free_buffer(blk);
     blk = NULL;
     set_error(res == FR_EXIST ? ERROR_FILE_EXISTS :
@@ -126,6 +132,7 @@ static void open_image(uint8_t *p, uint8_t m)
     uint8_t ts = ximg_type_from_size(fh.fsize);
     if (!ts || (t && ts != t) || ts == XIMG_D60 || ts == XIMG_D90) {
       f_close(&fh);
+      free_buffer(blk + 1);
       free_buffer(blk);
       blk = NULL;
       set_error(ERROR_IMAGE_INVALID);
@@ -148,6 +155,7 @@ static void open_image(uint8_t *p, uint8_t m)
       f_close(&fh);
       f_unlink(partition[current_part].fatfs, ops_scratch);
       fh_open = false;
+      free_buffer(blk + 1);
       free_buffer(blk);
       blk = NULL;
       set_error(ERROR_DISK_FULL);
@@ -293,12 +301,45 @@ static bool etab_mark(uint16_t n, uint8_t code)
   return img_write(etab + n, &code, 1);
 }
 
+/* Backup: the blocks of a 512 byte card sector are collected and written
+   together. A single 256 byte write into the preallocated file makes FatFs
+   read the card sector first (some 2.5 ms each at 8 MHz with data CRC),
+   a whole aligned sector goes out directly. The drive delivers the sectors
+   of a track about in ascending order, so pairs mostly meet. */
+static bool flush_pend(void)
+{
+  bool ok = true;
+  if (pend >= 0)
+    ok = img_write((uint32_t)pend * 256, blk->data + (pend & 1) * 256, 256);
+  pend = -1;
+  return ok;
+}
+
+/* where the data of this sector goes (called after its header) */
+uint8_t *ximg_rx_slot(uint8_t sector)
+{
+  uint16_t n = (uint16_t)(ximg_offset(type, track, sector) / 256);
+  if (pend >= 0 && (pend & 1) == (n & 1))
+    flush_pend();                       /* that half is taken by another pair */
+  return blk->data + (n & 1) * 256;
+}
+
 bool ximg_put_block(uint8_t sector, uint8_t result)
 {
-  uint32_t o = ximg_offset(type, track, sector);
+  uint16_t n = (uint16_t)(ximg_offset(type, track, sector) / 256);
+  uint8_t *d = blk->data + (n & 1) * 256;
   if (result != 1)
-    memset(blk->data, 0, 256);
-  return img_write(o, blk->data, 256) && etab_mark((uint16_t)(o / 256), result);
+    memset(d, 0, 256);
+  if (!etab_mark(n, result))
+    return false;
+  if (pend >= 0 && (pend >> 1) == (n >> 1)) {
+    pend = -1;                          /* the partner: whole card sector */
+    return img_write((uint32_t)(n & ~1) * 256, blk->data, 512);
+  }
+  if (!flush_pend())
+    return false;
+  pend = n;
+  return true;
 }
 
 bool ximg_get_block(uint8_t sector, uint8_t sum[2])
@@ -317,7 +358,10 @@ void ximg_finish(bool ok, uint16_t bad)
     bad = 255;
   ximg_armed_dev = 0;
   ximg_go = false;
-  if (fh_open && mode == 'B')
+  if (fh_open && mode == 'B') {
+    if (!flush_pend())
+      ok = false;
     f_sync(&fh);
+  }
   set_error_ts(ok ? ERROR_OK : ERROR_DRIVE_NOT_READY, track, (uint8_t)bad);
 }

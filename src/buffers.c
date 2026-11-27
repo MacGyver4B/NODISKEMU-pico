@@ -125,6 +125,28 @@ buffer_t *alloc_system_buffer(void) {
 }
 
 /**
+ * alloc_system_buffer_pair - allocate two buffers with continuous data
+ *
+ * Like alloc_system_buffer, but the data of the second buffer follows
+ * the first (512 bytes in one piece). Returns the first buffer or NULL.
+ * Free both buffers with free_buffer.
+ */
+buffer_t *alloc_system_buffer_pair(void) {
+  uint8_t i;
+
+  for (i=0;i+1<CONFIG_BUFFER_COUNT;i++) {
+    if (!buffers[i].allocated && !buffers[i+1].allocated) {
+      alloc_specific_buffer(i);
+      alloc_specific_buffer(i+1);
+      return &buffers[i];
+    }
+  }
+
+  set_error(ERROR_NO_CHANNEL);
+  return NULL;
+}
+
+/**
  * alloc_buffer - allocates a buffer
  *
  * This function allocates a buffer and marks it as used. It will also

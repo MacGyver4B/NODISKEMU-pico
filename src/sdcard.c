@@ -269,6 +269,13 @@ static uint8_t send_command(const uint8_t  card,
     spi_select_device(card+1);
     set_sd_led(1);
 
+    /* the card may still program the last written block (sd_write does
+       not wait for that, so the caller can go on meanwhile): wait until
+       it releases the data line */
+    timeout = getticks() + CARD_TIMEOUT_TICKS;
+    while (spi_rx_byte() != 0xff && time_before(getticks(), timeout))
+      ;
+
     /* send command */
     spi_tx_byte(cmd);
     tmp = swap_word(parameter); // AVR spi_tx_block clobbers the buffer
@@ -718,12 +725,9 @@ DRESULT sd_write(BYTE drv, const BYTE *buffer, DWORD sector, BYTE count) {
         continue;
       }
 
-      /* wait until write is finished */
-      // FIXME: Timeout?
-      do {
-        res = spi_rx_byte();
-      } while (res == 0);
-
+      /* the card programs the block now (busy: data line low). Not
+         waited for here: send_command waits before the next command, so
+         the caller can work meanwhile (X-IMG receives the next sectors) */
       break; // FIXME: Ugly control flow
     }
     deselect_card();

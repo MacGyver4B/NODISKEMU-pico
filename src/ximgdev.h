@@ -44,6 +44,7 @@ uint8_t  ximg_first(void);              /* armed track range */
 uint8_t  ximg_last(void);
 void     ximg_set_track(uint8_t t);     /* track of the data phase */
 void     ximg_track_done(bool ok, uint8_t bad);
+uint8_t *ximg_rx_slot(uint8_t sector);  /* backup: buffer for this sector */
 uint8_t  ximg_nsec(void);               /* sectors of that track */
 uint8_t *ximg_block(void);              /* 256 byte buffer */
 bool     ximg_put_block(uint8_t sector, uint8_t result);  /* backup: buffer -> image */

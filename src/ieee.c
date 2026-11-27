@@ -909,27 +909,63 @@ static bool xi_wait(bool dav, bool low, uint16_t ms) {
   }
 }
 
+/* Per byte first a short spin on the line alone (about half a millisecond
+   on the AVR), only then the full wait with timer, ATN and IFC. The full
+   wait costs some 20 us per call, that halved the transfer rate. An ATN
+   is noticed at most one spin later. */
+#define XI_SPIN 1500
+
+static inline bool xi_dav_is(bool low) {
+  return !ieee488_DAV() == low;
+}
+
+static inline bool xi_nrfd_is(bool low) {
+  return !ieee488_NRFD() == low;
+}
+
 static bool xi_recv(uint8_t *d, uint16_t n, uint16_t first_ms) {
+  bool dl = xi_dav_low, nl = xi_nrfd_low;
   for (uint16_t i = 0; i < n; i++) {
-    xi_dav_low = !xi_dav_low;
-    if (!xi_wait(true, xi_dav_low, i ? 200 : first_ms))
-      return false;
+    uint16_t spin = XI_SPIN;
+    dl = !dl;
+    while (!xi_dav_is(dl))
+      if (!--spin) {
+        if (!xi_wait(true, dl, i ? 200 : first_ms)) {
+          xi_dav_low = dl;
+          xi_nrfd_low = nl;
+          return false;
+        }
+        break;
+      }
     d[i] = ~ieee488_Data();
-    xi_nrfd_low = !xi_nrfd_low;
-    ieee488_SetNRFD(!xi_nrfd_low);
+    nl = !nl;
+    ieee488_SetNRFD(!nl);
   }
+  xi_dav_low = dl;
+  xi_nrfd_low = nl;
   return true;
 }
 
 static bool xi_send(const uint8_t *d, uint16_t n, uint16_t first_ms) {
+  bool dl = xi_dav_low, nl = xi_nrfd_low;
   for (uint16_t i = 0; i < n; i++) {
+    uint16_t spin = XI_SPIN;
     ieee488_SetData(~d[i]);
-    xi_dav_low = !xi_dav_low;
-    ieee488_SetDAV(!xi_dav_low);
-    xi_nrfd_low = !xi_nrfd_low;
-    if (!xi_wait(false, xi_nrfd_low, i ? 200 : first_ms))
-      return false;
+    dl = !dl;
+    ieee488_SetDAV(!dl);
+    nl = !nl;
+    while (!xi_nrfd_is(nl))
+      if (!--spin) {
+        if (!xi_wait(false, nl, i ? 200 : first_ms)) {
+          xi_dav_low = dl;
+          xi_nrfd_low = nl;
+          return false;
+        }
+        break;
+      }
   }
+  xi_dav_low = dl;
+  xi_nrfd_low = nl;
   return true;
 }
 
@@ -950,7 +986,8 @@ static bool ximg_dotrack(uint8_t *bad) {
     xi_listen();
     for (i = 0; i < ns && ok; i++) {
       uint8_t hd[2];
-      ok = xi_recv(hd, 2, i ? 2000 : 5000) && xi_recv(b, 256, 200) && hd[0] < ns;
+      ok = xi_recv(hd, 2, i ? 2000 : 5000) && hd[0] < ns &&
+           xi_recv(ximg_rx_slot(hd[0]), 256, 200);
       if (ok) {
         if (hd[1] != 1)
           (*bad)++;
