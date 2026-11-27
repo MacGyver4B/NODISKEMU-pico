@@ -32,7 +32,7 @@
 120 ifm$="r"then300
 200 gosub500:ty=dt:d$="disk type":gosub770:ifty=0thenprint"no cbm disk":goto900
 205 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty-30*(ty=60)),2):rem d9060 also .d90
-210 print#14,"x-img:b,"ty","n$:input#14,e,e$,et,es:ife=63thenprint"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"file exists, replace (y/n)";a$:ifa$="y"thenprint#14,"x-img:b,"ty",@"n$:input#14,e,e$,et,es
+210 print#14,"x-img:b,"ty","n$:input#14,e,e$,et,es:ife=63thenprint"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:w=ti:print"file exists, replace (y/n)? ";:gosub790:a$=l$:gosub785:ifa$="y"thenprint#14,"x-img:b,"ty",@"n$:input#14,e,e$,et,es
 211 m$="":gosub760:ifethenprint"petsd:"e;e$;et;es
 212 d$="x-img:b":gosub770:ife then900
 220 gosub600:gosub400:gosub450:print#14,"x-img:e":gosub850
@@ -54,7 +54,7 @@
 344 ifbs=3thenm$="cannot read bad sector map:"+str$(e)
 345 ifbsthenprint:printm$:goto900
 346 print"all data on the hard disk will be lost!":iffmthenprint"(hard disk is not formatted)"
-347 print"type yes to continue: ";:gosub790:ifl$<>"yes"thenprint"aborted":goto900
+347 w=ti:print"type yes to continue: ";:gosub790:gosub785:ifl$<>"yes"thenprint"aborted":goto900
 348 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 349 goto320
 400 nt=35:ifty=80thennt=77
@@ -123,6 +123,7 @@
 771 return
 780 v=int((ti-t0)/nt*10):poke1015,vand255:poke1016,int(v/256):poke1013,kk:poke1018,fu
 781 poke1017,(kk+fu+peek(1015)+peek(1016))and255:return
+785 poke141,w/65536:poke142,(w/256)and255:poke143,wand255:return:rem clock back to w (user wait not timed)
 790 l$=""
 791 geta$:ifa$=""then791
 792 ifa$=chr$(13)thenprint:return
@@ -184,7 +185,7 @@
 3004 print"{home}{down}{down}{down}{down}{down}{down}legacy mode (u1/u2), d"mid$(str$(ty),2):ifm$="r"then3200
 3006 iflg=2thengosub3500
 3020 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
-3022 open4,su,4,n$+",p,w":input#14,e,e$:ife=63thenclose4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:input"file exists, replace (y/n)";a$:ifa$="y"thenopen4,su,4,"@:"+n$+",p,w":input#14,e,e$
+3022 open4,su,4,n$+",p,w":input#14,e,e$:ife=63thenclose4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}";:w=ti:print"file exists, replace (y/n)? ";:gosub790:a$=l$:gosub785:ifa$="y"thenopen4,su,4,"@:"+n$+",p,w":input#14,e,e$
 3024 ifethenprint"petsd:"e;e$:goto900
 3026 dimer%(690),u%(31):ec=0:k=0:tq=ti:poke996,64:poke997,fu:poke998,98:poke999,32:poke1000,su:poke1001,100
 3030 fort=1tont:gosub3400:print"{home}{down}{down}{down}{down}{down}{down}{down}track"str$(t)" of"str$(nt)"   ":b0=k:fori=0ton-1:u%(i)=0:next:s=0
