@@ -387,6 +387,7 @@ static char lcd_format_char(uint8_t part) {
   switch (partition[part].imagetype & D64_TYPE_MASK) {
   case D64_TYPE_DNP: d = LG_P; break;
   case D64_TYPE_D41: d = LG_4; break;
+  case D64_TYPE_D67: d = LG_4; break;
   case D64_TYPE_D71: d = LG_7; break;
   case D64_TYPE_D80: d = LG_0; break;
   case D64_TYPE_D81: d = LG_1; break;

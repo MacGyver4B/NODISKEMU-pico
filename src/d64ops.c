@@ -116,6 +116,7 @@ static void format_d81_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t
 static void format_d80_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t *idbuf);
 static void format_d82_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t *idbuf);
 static void format_dnp_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t *idbuf);
+static void format_d67_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t *idbuf);
 
 /* ------------------------------------------------------------------------- */
 /*  Utility functions                                                        */
@@ -123,6 +124,10 @@ static void format_dnp_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t
 
 static const PROGMEM struct param_s d41param = {
   18, 1, 35, 0x90, 0xa2, 10, 3, format_d41_image
+};
+
+static const PROGMEM struct param_s d67param = {
+  18, 1, 35, 0x90, 0xa2, 10, 3, format_d67_image
 };
 
 static const PROGMEM struct param_s d71param = {
@@ -188,6 +193,15 @@ static uint16_t sector_lba(uint8_t part, uint8_t track, const uint8_t sector) {
       return 17*21 + 7*19 + (track-24)*18 + sector + offset;
     return 17*21 + 7*19 + 6*18 + (track-30)*17 + sector + offset;
 
+  case D64_TYPE_D67:                    /* 2040 DOS 1: 21/20/18/17 */
+    if (track < 17)
+      return track*21 + sector;
+    if (track < 24)
+      return 17*21 + (track-17)*20 + sector;
+    if (track < 30)
+      return 17*21 + 7*20 + (track-24)*18 + sector;
+    return 17*21 + 7*20 + 6*18 + (track-30)*17 + sector;
+
   case D64_TYPE_D81:
     return track*40 + sector;
 
@@ -242,6 +256,15 @@ static uint16_t sectors_per_track(uint8_t part, uint8_t track) {
       return 21;
     if (track < 25)
       return 19;
+    if (track < 31)
+      return 18;
+    return 17;
+
+  case D64_TYPE_D67:
+    if (track < 18)
+      return 21;
+    if (track < 25)
+      return 20;
     if (track < 31)
       return 18;
     return 17;
@@ -1293,6 +1316,11 @@ uint8_t d64_mount(path_t *path, uint8_t *name) {
     memcpy_P(&partition[part].d64data, &d41param, sizeof(struct param_s));
     break;
 
+  case 176640:                          /* D67: 2040/3040 DOS 1 */
+    imagetype = D64_TYPE_D67;
+    memcpy_P(&partition[part].d64data, &d67param, sizeof(struct param_s));
+    break;
+
   case 349696:
     imagetype = D64_TYPE_D71;
     memcpy_P(&partition[part].d64data, &d71param, sizeof(struct param_s));
@@ -2005,6 +2033,27 @@ static void format_d41_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t
   idbuf[4] = 'A';
   format_copy_label(part, bam_buffer->data, name, idbuf);
   /* two additional 0xa0 characters on 5.25" disks */
+  bam_buffer->data[0xa9] = 0xa0;
+  bam_buffer->data[0xaa] = 0xa0;
+
+  clear_dir_sector(part, D41_BAM_TRACK, 1, buf->data);
+}
+
+static void format_d67_image(uint8_t part, buffer_t *buf, uint8_t *name, uint8_t *idbuf) {
+  /* like D41, but as the 2040 with DOS 1 writes it: format byte $01,
+     no DOS type, two spaces after the ID */
+  for (uint8_t s=0; s<2; s++)
+    allocate_sector(part, D41_BAM_TRACK, s);
+
+  uint8_t *ptr = bam_buffer->data;
+  *ptr++ = 18;
+  *ptr++ = 1;
+  *ptr++ = 0x01;
+
+  idbuf[2] = ' ';
+  idbuf[3] = ' ';
+  idbuf[4] = 0xa0;
+  format_copy_label(part, bam_buffer->data, name, idbuf);
   bam_buffer->data[0xa9] = 0xa0;
   bam_buffer->data[0xaa] = 0xa0;
 

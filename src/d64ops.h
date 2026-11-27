@@ -52,6 +52,7 @@
 #define D64_TYPE_D81  4
 #define D64_TYPE_D80  8
 #define D64_TYPE_D82 16
+#define D64_TYPE_D67 32   /* 2040/3040 DOS 1: D64 layout, tracks 18-24 with 20 sectors */
 #define D64_HAS_ERRORINFO 128
 
 extern const fileops_t d64ops;

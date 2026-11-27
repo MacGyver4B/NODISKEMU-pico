@@ -819,8 +819,10 @@ void ieee488_Unlisten(void) {
   command_length = 0;
 
   // Clean up unused buffers like the IEC code does after every
-  // command, e.g. the one a failed directory open leaves behind
+  // command, e.g. the one a failed directory open leaves behind,
+  // and write back a changed BAM (N command, SAVE) like iec.c does
   free_multiple_buffers(FMB_UNSTICKY);
+  d64_bam_commit();
 }
 
 
