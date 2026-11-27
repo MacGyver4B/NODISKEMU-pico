@@ -39,7 +39,12 @@
 230 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 300 print#14,"x-img:r,0,"n$:gosub850:d$="x-img:r":gosub770:ife then900
 305 ty=et
-310 gosub500:d$="disk type":gosub770:ifdt<>tyorfmthengosub950
+306 sd=0:ifdv=27thenprint#15,"m-r"chr$(172)chr$(16)chr$(1):get#15,a$:sd=asc(a$+chr$(0)):rem sides of the drive
+308 ifsd=1andty=82thenm$="8050 is single sided, image is d82":goto314
+310 gosub500:d$="disk type":gosub770:m$="8250/sfd cannot format d80, insert a formatted 8050 disk":ifsd=2andty=80and(dt<>80orfm)then314
+311 ifdt<>tyorfmthengosub950
+312 goto320
+314 print:printm$:print#14,"x-img:e":gosub850:goto900
 320 gosub600:gosub400:gosub450:print#15,"i"+u$:gosub800:print#14,"x-img:e":gosub850
 330 print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, errors"bt:goto900
 400 nt=35:ifty=80thennt=77
