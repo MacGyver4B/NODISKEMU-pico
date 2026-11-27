@@ -82,10 +82,11 @@
 640 d$="code upload":gosub770:p$=chr$(0)+chr$(0)+chr$(dn)+chr$(7)+chr$(1)+chr$(2)+chr$(7)+chr$(8)+chr$(9)+chr$(10)+chr$(11)
 650 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(18)+chr$(19)+chr$(48)+chr$(49)+chr$(50)+chr$(51)+chr$(64)
 660 p$=p$+chr$(0)+chr$(0)+chr$(0)+chr$(0):print#15,"m-w"chr$(67)chr$(35)chr$(25)p$
-680 restore:fori=0to237:readx:next:z$="":fori=1to16:readx:z$=z$+chr$(x):next
-685 ifty=64thenfori=1to8:readx:z$=left$(z$,i-1)+chr$(x)+mid$(z$,i+1):next
+680 z$=chr$(40)+chr$(29)+chr$(54)+chr$(27)+chr$(65)+chr$(25)+chr$(78)+chr$(23)+chr$(117)+chr$(29)+chr$(131)+chr$(27)+chr$(142)+chr$(25)+chr$(155)+chr$(23)
+685 ifty=64thenz$=chr$(18)+chr$(21)+chr$(25)+chr$(19)+chr$(31)+chr$(18)+chr$(36)+chr$(17)+mid$(z$,9)
 686 ifty=60orty=90thenz$=chr$(153)+chr$(ty*32/15)+mid$(z$,3)
 690 print#15,"m-w"chr$(240)chr$(35)chr$(16)z$:d$="parameters":gosub770:return
+694 rem zone tables 695/696 are in 680/685 (reading them took 1.5 s); 3002 skips them
 695 data40,29,54,27,65,25,78,23,117,29,131,27,142,25,155,23
 696 data18,21,25,19,31,18,36,17
 697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201
