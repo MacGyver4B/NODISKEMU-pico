@@ -93,6 +93,7 @@ def legacy():
 DP1, DD1, DS1, DP2, DD2, DS2, DN, DCNT = 0x03E4, 0x03E5, 0x03E6, 0x03E7, 0x03E8, 0x03E9, 0x03EA, 0x03EB
 LIST1, TKSA, UNTLK, UNLSN, ISOUR = 0xF0D7, 0xF193, 0xF1AE, 0xF1B9, 0xF109
 FA, C3P0, SATUS, BSOUR, VIA, IEEIS = 0xD4, 0xA0, 0x96, 0xA5, 0xE840, 0xE821
+STKEY = 0x9B                              # $EF solange STOP gedrueckt
 
 def d2d(org):
     A = Asm(org)
@@ -103,12 +104,17 @@ def d2d(org):
     A.a(0xAD, DS2); A.a(0x20, TKSA)                                        # S2, PET hoert, ATN frei
     A.a(0xAD, DN); A.a(0x8D, DCNT)
     A.L('loop'); A.a(0xAD, VIA); A.b(0x09, 0x02); A.a(0x8D, VIA)      # NRFD frei
-    A.L('w1'); A.a(0x2C, VIA); A.r(0x30, 'w1')                          # warten DAV low
+    A.L('w1'); A.a(0x2C, VIA); A.r(0x10, 'got')                         # warten DAV low,
+    A.b(0xA5, STKEY); A.b(0xC9, 0xEF); A.r(0xD0, 'w1')                  # dabei STOP-Taste
+    A.r(0xF0, 'abort')
+    A.L('got')
     A.a(0xAD, VIA); A.b(0x29, 0xFD); A.a(0x8D, VIA)                     # NRFD aktiv
     A.b(0xA9, 0x3C); A.a(0x8D, IEEIS)                                   # NDAC frei
     A.L('w2'); A.a(0x2C, VIA); A.r(0x10, 'w2')                          # warten DAV high
     A.b(0xA9, 0x34); A.a(0x8D, IEEIS)                                   # NDAC aktiv
     A.a(0xCE, DCNT); A.r(0xD0, 'loop')
+    A.b(0x2C)                                                           # INC ueberspringen
+    A.L('abort'); A.b(0xE6, SATUS)                                      # Abbruch: ST <> 0
     A.a(0x20, UNTLK); A.a(0x4C, UNLSN)                                  # UNTLK zieht ATN zuerst
     return A.done()
 
@@ -126,8 +132,12 @@ if __name__ == '__main__':
     n = 2000
     for i in range(0, len(d), 32):
         print(f"{n} data#" + bytes(d[i:i + 32]).hex()); n += 1
-    lg = legacy(); dd = d2d(0x027A + len(lg))
-    assert 0x027A + len(lg) + len(dd) <= 0x033A
+    # Legacy: U1/U2-Routinen ab $027A, Geraet-zu-Geraet ab $033A (der Hex-
+    # Lader dort wird im Legacy-Modus nicht mehr gebraucht; der Puffer der
+    # Uebertragung ueber den PET liegt auch dort, die beiden schliessen
+    # sich aus: dp=1 oder dp=0)
+    lg = legacy(); dd = d2d(0x033A)
+    assert 0x027A + len(lg) <= 0x033A and 0x033A + len(dd) <= 0x03E0
     for l in lines(697, lg + dd, -(-(len(lg) + len(dd)) // 3)): print(l)
-    print(f"d2d at {0x027A + len(lg)} ({len(dd)} bytes)", file=sys.stderr)
+    print(f"legacy {len(lg)} bytes at 634, d2d {len(dd)} bytes at 826", file=sys.stderr)
     print(f"mc {len(m)} loader {len(ld)} drive {len(d)} legacy {len(lg)}", file=sys.stderr)

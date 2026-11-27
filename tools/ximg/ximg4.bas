@@ -89,9 +89,9 @@
 694 rem zone tables 695/696 are in 680/685 (reading them took 1.5 s); 3002 skips them
 695 data40,29,54,27,65,25,78,23,117,29,131,27,142,25,155,23
 696 data18,21,25,19,31,18,36,17
-697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201
-698 data255,173,226,3,141,227,3,172,227,3,185,58,3,32,210,255,238,227,3,173,227,3,205,225,3,208,236,76,162,2,169,0,133,160,133,150,173,229,3,133,212,173,228,3,32,215,240,173,230,3,133,165,32,9,241,173,232,3,133,212,173,231,3
-699 data32,215,240,173,233,3,32,147,241,173,234,3,141,235,3,173,64,232,9,2,141,64,232,44,64,232,48,251,173,64,232,41,253,141,64,232,169,60,141,33,232,44,64,232,16,251,169,52,141,33,232,206,235,3,208,215,32,174,241,76,185,241
+697 data76,128,2,76,180,2,174,224,3,240,32,32,198,255,173,226,3,141,227,3,32,207,255,172,227,3,153,58,3,238,227,3,173,227,3,205,225,3,208,236,76,204,255,172,226,3,169,0,153,58,3,200,204,225,3,208,247,96,174,224,3,32,201,255,173,226,3
+698 data141,227,3,172,227,3,185,58,3,32,210,255,238,227,3,173,227,3,205,225,3,208,236,76,162,2,169,0,133,160,133,150,173,229,3,133,212,173,228,3,32,215,240,173,230,3,133,165,32,9,241,173,232,3,133,212,173,231,3,32,215,240,173,233,3,32,147
+699 data241,173,234,3,141,235,3,173,64,232,9,2,141,64,232,44,64,232,16,8,165,155,201,239,208,245,240,29,173,64,232,41,253,141,64,232,169,60,141,33,232,44,64,232,16,251,169,52,141,33,232,206,235,3,208,207,44,230,150,32,174,241,76,185,241
 700 o3=-(ty=60orty=90):print#14,"x-img:a,"fu","ft","lt:gosub850:ifethen900
 710 print#15,"m-w"chr$(238)chr$(35)chr$(2)chr$(ft-o3)chr$(lt+1-o3):d$="x-img:a, range":gosub770
 720 print"{home}{down}{down}{down}{down}{down}{down}track"str$(ft)" to"str$(lt)"      "
@@ -149,7 +149,7 @@
 2024 data#238e722320c220208c21ae7223ee7123a9ff9d5c23208220ad7123cd4423f009
 2025 data#e8ec4623d0b64cda22ad442318690129fe8d782320bd21a9ff8d020260
 3000 close2:open2,fu,2,"#":ty=64-3*(lg=2):ns=683-7*(lg=2):nt=35
-3002 restore:fori=1to262:readx:next:fori=0to187:readx:poke634+i,x:next
+3002 restore:fori=1to262:readx:next:fori=0to92:readx:poke634+i,x:next:fori=0to105:readx:poke826+i,x:next
 3004 print"{home}{down}{down}{down}{down}{down}{down}legacy mode (u1/u2), d"mid$(str$(ty),2):ifm$="r"then3200
 3006 iflg=2thengosub3500
 3020 ifleft$(right$("    "+n$,4),2)<>".d"thenn$=n$+".d"+mid$(str$(ty),2)
@@ -163,9 +163,9 @@
 3046 er%(b0+s)=c:k=k+1:ifc>1thenec=ec+1
 3047 ifiv>1thenb=b0+s:print#14,"p"chr$(4)chr$(0)chr$(band255)chr$(b/256)chr$(0)
 3048 ifethenpoke992,0:poke994,0:poke993,128:sys634:poke992,4:sys637:sys637:goto3060
-3049 ifdpandlg=1thenprint#15,"b-p:2,0":poke1002,0:sys727:goto3060
+3049 ifdpandlg=1thenprint#15,"b-p:2,0":poke1002,0:sys826:on-(st<>0)goto3990:goto3060
 3050 iflg=1thenprint#15,"b-p:2,0":poke994,0:poke993,128:poke992,2:sys634:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637:goto3060
-3051 ifdpthenprint#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:print#4,chr$(asc(a$+chr$(0)));:print#15,"b-p:2,1":poke1002,255:sys727:goto3060
+3051 ifdpthenprint#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:print#4,chr$(asc(a$+chr$(0)));:print#15,"b-p:2,1":poke1002,255:sys826:on-(st<>0)goto3990:goto3060
 3052 print#15,"m-r"chr$(0)chr$(pg)chr$(1):get#15,a$:poke826,asc(a$+chr$(0))
 3054 print#15,"b-p:2,1":poke994,1:poke993,128:poke992,2:sys634:poke994,0:poke992,4:sys637:poke992,2:sys634:poke992,4:sys637
 3060 u%(s)=1:s=s+iv:ifs>=nthens=s-n
@@ -175,16 +175,18 @@
 3072 fork=0tons-1step128:c=128:ifk+128>nsthenc=ns-k
 3074 forj=0toc-1:poke826+j,er%(k+j):next:poke992,4:poke994,0:poke993,c:sys637:nextk
 3090 close4:print"{home}{down}{down}{down}{down}{down}{down}{down}{down}{down}{down}done in"int((ti-tq)/hz*10)/10"s, total"int(ti/hz*10)/10"s, bad sectors"ec:goto900
-3200 open4,su,4,n$+",p,r":input#14,e,e$:ifethenprint"petsd:"e;e$:goto900
-3201 gosub796
-3202 print#15,"u1:2 "u$" 18 0":input#15,e,e$:ifeorfmthenprint"formatting":print#15,"n"u$":imager,xi":input#15,e,e$:ifethenprint"format:"e;e$:goto900
-3204 close2:open2,fu,2,"#":iflg=2thengosub3500
+3200 print#14,"x-img:r,0,"n$:gosub850:ifethen900
+3201 x=et:print#14,"x-img:e":gosub850:ifx<>tythenprint"image is not a d"mid$(str$(ty),2):goto900
+3202 gosub796
+3203 print#15,"u1:2 "u$" 18 0":input#15,e,e$:ifeorfmthenprint"formatting":print#15,"n"u$":imager,xi":input#15,e,e$:ifethenprint"format:"e;e$:goto900
+3204 open4,su,4,n$+",p,r":input#14,e,e$:ifethenprint"petsd:"e;e$:goto900
+3205 close2:open2,fu,2,"#":iflg=2thengosub3500
 3206 tq=ti:ec=0:poke996,32:poke997,fu:poke998,98:poke999,64:poke1000,su:poke1001,100
 3210 fort=1tont:gosub3400:print"{home}{down}{down}{down}{down}{down}{down}{down}track"str$(t)" of"str$(nt)"   "
 3220 fors=0ton-1:iflg=2then3224
-3221 ifdpthenprint#15,"b-p:2,0":poke1002,0:sys727:goto3230
+3221 ifdpthenprint#15,"b-p:2,0":poke1002,0:sys826:on-(st<>0)goto3990:goto3230
 3222 print#15,"b-p:2,0":poke994,0:poke993,128:poke992,4:sys634:poke992,2:sys637:poke992,4:sys634:poke992,2:sys637:goto3230
-3224 ifdpthenget#4,a$:print#15,"m-w"chr$(0)chr$(pg)chr$(1)chr$(asc(a$+chr$(0))):print#15,"b-p:2,1":poke1002,255:sys727:goto3230
+3224 ifdpthenget#4,a$:print#15,"m-w"chr$(0)chr$(pg)chr$(1)chr$(asc(a$+chr$(0))):print#15,"b-p:2,1":poke1002,255:sys826:on-(st<>0)goto3990:goto3230
 3225 poke994,0:poke993,128:poke992,4:sys634:print#15,"m-w"chr$(0)chr$(pg)chr$(1)chr$(peek(826)):print#15,"b-p:2,1"
 3226 poke994,1:poke992,2:sys637:poke994,0:poke992,4:sys634:poke992,2:sys637
 3230 print#15,"u2:2 "u$t;s:input#15,e,e$,et,es:ifethenec=ec+1
@@ -199,3 +201,4 @@
 3504 print#15,"m-r"chr$(2)chr$(p)chr$(1):get#15,a$:ifasc(a$+chr$(0))=85thenpg=p:p=79
 3506 nextp:ifpg=0thenprint"drive buffer not found":goto900
 3508 return
+3990 print:print"aborted (stop key or no data)":goto900
