@@ -10,6 +10,11 @@
  * - The command channel is opened like the PET does (OPEN 15,dev,15,"I0").
  * - Track mode: no ATN between M-E and the end of the fast transfer, the
  *   drive code runs with interrupts off and waits for the handshake.
+ *
+ * Placeholder: X-IMG works on sector level (job queue), damaged sectors end
+ * up as error codes. Reading damaged tracks raw (2031 from the head, 2040 to
+ * 8250 via controller code started with an $E0 job) is not planned; flux
+ * tools do that better.
  */
 #include <string.h>
 #include "ximg.h"
